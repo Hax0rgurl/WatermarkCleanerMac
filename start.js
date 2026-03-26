@@ -11,7 +11,7 @@ module.exports = {
           "streamlit run app.py --server.headless true",
         ],
         on: [{
-          "event": "/http:\/\/\\S+/",
+          "event": "/(http:\/\/\\S+)/",
           "done": true
         }]
       }
@@ -19,7 +19,7 @@ module.exports = {
     {
       method: "local.set",
       params: {
-        url: "{{input.event[0]}}"
+        url: "{{input.event[1]}}"
       }
     }
   ]

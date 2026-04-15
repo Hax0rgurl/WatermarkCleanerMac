@@ -1,2 +1,10 @@
 node_modules
 .DS_Store
+app/.venv/
+app/build/
+app/logs/
+app/output/
+app/working_dir/
+app/sorawatermarkcleaner.egg-info/
+app/frontend/node_modules/
+app/**/.DS_Store

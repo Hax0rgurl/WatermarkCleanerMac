@@ -392,3 +392,13 @@ def test_corrupt_cached_detector_is_revalidated_and_replaced(
 
     assert calls == 1
     assert model_path.read_bytes() == correct
+
+
+def test_detector_digest_matches_current_github_release_asset() -> None:
+    from demark_world.configs import WATER_MARK_DETECT_YOLO_WEIGHTS_SHA256
+
+    assert (
+        WATER_MARK_DETECT_YOLO_WEIGHTS_SHA256
+        == "6ac71b6ab8db27ec7928b5176e60a359"
+        "c65e1579a5c1d58cf2f98df30cf3085e"
+    )

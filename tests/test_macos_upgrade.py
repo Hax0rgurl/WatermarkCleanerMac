@@ -17,7 +17,7 @@ def test_demark_imports_do_not_load_mmcv() -> None:
 
 
 def test_runtime_paths_follow_environment(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("SORA_WATERMARK_RUNTIME_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("MAC_WATERMARK_RUNTIME_DIR", str(tmp_path / "runtime"))
     sys.modules.pop("demark_world.configs", None)
     configs = importlib.import_module("demark_world.configs")
 
@@ -25,6 +25,17 @@ def test_runtime_paths_follow_environment(monkeypatch, tmp_path: Path) -> None:
     assert configs.WATER_MARK_DETECT_YOLO_WEIGHTS.is_relative_to(configs.RUNTIME_ROOT)
     assert configs.LOGS_PATH.is_relative_to(configs.RUNTIME_ROOT)
     assert configs.DATA_PATH.is_relative_to(configs.RUNTIME_ROOT)
+
+
+def test_legacy_runtime_environment_is_still_supported(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("MAC_WATERMARK_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("SORA_WATERMARK_RUNTIME_DIR", str(tmp_path / "legacy-runtime"))
+    sys.modules.pop("demark_world.configs", None)
+    configs = importlib.import_module("demark_world.configs")
+
+    assert configs.RUNTIME_ROOT == tmp_path / "legacy-runtime"
 
 
 def test_engine_accepts_injected_components() -> None:

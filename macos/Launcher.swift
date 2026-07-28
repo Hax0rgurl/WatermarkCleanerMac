@@ -2,7 +2,7 @@ import AppKit
 import Darwin
 import Foundation
 
-private let appName = "Sora Watermark Cleaner"
+private let appName = "MAC WATERMARK CLEANER"
 
 private func resourceURL() -> URL {
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var launcherLogURL: URL = {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(
-                "Library/Application Support/Sora Watermark Cleaner/Logs/launcher.log"
+                "Library/Application Support/MAC WATERMARK CLEANER/Logs/launcher.log"
             )
     }()
 
@@ -89,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         content.translatesAutoresizingMaskIntoConstraints = false
         window.contentView = content
 
-        let title = NSTextField(labelWithString: "Sora Watermark Cleaner")
+        let title = NSTextField(labelWithString: appName)
         title.font = .systemFont(ofSize: 25, weight: .bold)
         title.translatesAutoresizingMaskIntoConstraints = false
 
@@ -208,8 +208,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.statusLabel.stringValue = "Starting the cleaner…"
             }
             for line in text.split(separator: "\n") {
-                if line.hasPrefix("SORA_UI_URL="),
-                   let url = URL(string: String(line.dropFirst("SORA_UI_URL=".count))) {
+                if line.hasPrefix("MAC_WATERMARK_UI_URL="),
+                   let url = URL(
+                       string: String(line.dropFirst("MAC_WATERMARK_UI_URL=".count))
+                   ) {
                     self.uiURL = url
                     self.waitUntilReady(url: url, attempt: 0)
                 }
@@ -287,7 +289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openOutputFolder() {
         let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Movies/Sora Watermark Cleaner", isDirectory: true)
+            .appendingPathComponent("Movies/MAC WATERMARK CLEANER", isDirectory: true)
         try? FileManager.default.createDirectory(
             at: path,
             withIntermediateDirectories: true
@@ -298,7 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openRuntimeFolder() {
         let path = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(
-                "Library/Application Support/Sora Watermark Cleaner",
+                "Library/Application Support/MAC WATERMARK CLEANER",
                 isDirectory: true
             )
         try? FileManager.default.createDirectory(

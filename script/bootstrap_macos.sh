@@ -5,7 +5,20 @@ MODE="${1:-serve}"
 PYTHON_VERSION="3.12.13"
 RESOURCES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE_DIR="$RESOURCES_DIR/engine"
-RUNTIME_DIR="${SORA_WATERMARK_RUNTIME_DIR:-$HOME/Library/Application Support/Sora Watermark Cleaner}"
+DEFAULT_RUNTIME_DIR="$HOME/Library/Application Support/MAC WATERMARK CLEANER"
+LEGACY_RUNTIME_DIR="$HOME/Library/Application Support/Sora Watermark Cleaner"
+if [[ -z "${MAC_WATERMARK_RUNTIME_DIR:-}" \
+  && -z "${SORA_WATERMARK_RUNTIME_DIR:-}" \
+  && ! -e "$DEFAULT_RUNTIME_DIR" \
+  && -d "$LEGACY_RUNTIME_DIR" ]]; then
+  if /bin/ln -s "$LEGACY_RUNTIME_DIR" "$DEFAULT_RUNTIME_DIR"; then
+    echo "Reusing existing app data through $DEFAULT_RUNTIME_DIR"
+  else
+    echo "WARNING: Existing app data could not be linked; using it in place."
+    DEFAULT_RUNTIME_DIR="$LEGACY_RUNTIME_DIR"
+  fi
+fi
+RUNTIME_DIR="${MAC_WATERMARK_RUNTIME_DIR:-${SORA_WATERMARK_RUNTIME_DIR:-$DEFAULT_RUNTIME_DIR}}"
 VENV_DIR="$RUNTIME_DIR/Python"
 BIN_DIR="$RUNTIME_DIR/bin"
 LOG_DIR="$RUNTIME_DIR/Logs"
@@ -18,12 +31,15 @@ touch "$LOG_FILE"
 printf '\n[%s] Launcher session: %s\n' \
   "$(/bin/date '+%Y-%m-%d %H:%M:%S')" "$MODE" >> "$LOG_FILE"
 
+export MAC_WATERMARK_RUNTIME_DIR="$RUNTIME_DIR"
 export SORA_WATERMARK_RUNTIME_DIR="$RUNTIME_DIR"
 if [[ "$MODE" == "--test" || "$MODE" == "test" ]]; then
-  export SORA_WATERMARK_OUTPUT_DIR="${SORA_WATERMARK_OUTPUT_DIR:-$RUNTIME_DIR/TestOutput}"
+  OUTPUT_DIR="${MAC_WATERMARK_OUTPUT_DIR:-${SORA_WATERMARK_OUTPUT_DIR:-$RUNTIME_DIR/TestOutput}}"
 else
-  export SORA_WATERMARK_OUTPUT_DIR="${SORA_WATERMARK_OUTPUT_DIR:-$HOME/Movies/Sora Watermark Cleaner}"
+  OUTPUT_DIR="${MAC_WATERMARK_OUTPUT_DIR:-${SORA_WATERMARK_OUTPUT_DIR:-$HOME/Movies/MAC WATERMARK CLEANER}}"
 fi
+export MAC_WATERMARK_OUTPUT_DIR="$OUTPUT_DIR"
+export SORA_WATERMARK_OUTPUT_DIR="$OUTPUT_DIR"
 export UV_CACHE_DIR="$RUNTIME_DIR/Cache/uv"
 export UV_PYTHON_INSTALL_DIR="$RUNTIME_DIR/ManagedPython"
 export UV_MANAGED_PYTHON=1
@@ -76,7 +92,7 @@ if [[ "$MODE" == "--diagnose" || "$MODE" == "diagnose" ]]; then
   echo "ENGINE=$ENGINE_DIR"
   echo "RUNTIME=$RUNTIME_DIR"
   echo "UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR"
-  echo "OUTPUT=$SORA_WATERMARK_OUTPUT_DIR"
+  echo "OUTPUT=$MAC_WATERMARK_OUTPUT_DIR"
   exit 0
 fi
 
@@ -161,8 +177,9 @@ print("RUNTIME_IMPORT_OK")
 PY
   base_python="$("$VENV_DIR/bin/python" -c \
     'import pathlib, sys; print(pathlib.Path(getattr(sys, "_base_executable", sys.executable)).resolve())')"
+  managed_python_root="$(cd "$UV_PYTHON_INSTALL_DIR" && /bin/pwd -P)"
   case "$base_python" in
-    "$UV_PYTHON_INSTALL_DIR"/*) ;;
+    "$managed_python_root"/*) ;;
     *)
       echo "ERROR: Managed Python escaped the private runtime: $base_python"
       exit 72
@@ -202,7 +219,7 @@ PY
   exit 0
 fi
 
-echo "[4/4] Starting Sora Watermark Cleaner…"
+echo "[4/4] Starting MAC WATERMARK CLEANER…"
 port=8501
 while [[ "$port" -le 8510 ]]; do
   if ! /usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -215,7 +232,7 @@ if [[ "$port" -gt 8510 ]]; then
   exit 71
 fi
 
-echo "SORA_UI_URL=http://127.0.0.1:$port"
+echo "MAC_WATERMARK_UI_URL=http://127.0.0.1:$port"
 exec "$VENV_DIR/bin/python" -m streamlit run "$ENGINE_DIR/app.py" \
   --server.address 127.0.0.1 \
   --server.port "$port" \

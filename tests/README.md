@@ -1,6 +1,6 @@
-# Sora Watermark Cleaner - Unit Tests
+# MAC WATERMARK CLEANER - Unit Tests
 
-This directory contains unit tests for the Sora Watermark Cleaner project.
+This directory contains unit tests for the MAC WATERMARK CLEANER project.
 
 ## Test Structure
 

@@ -1,8 +1,8 @@
-"""Runtime paths and model configuration for the Sora macOS distribution.
+"""Runtime paths and model configuration for MAC WATERMARK CLEANER.
 
-This file is derived from DeMark-World and was changed for the Sora Watermark
-Cleaner macOS app.  In particular, no directory below the installed .app
-bundle is ever used for mutable state.
+This file is derived from DeMark-World and was changed for the macOS app. In
+particular, no directory below the installed .app bundle is ever used for
+mutable state.
 """
 
 from __future__ import annotations
@@ -16,12 +16,14 @@ SOURCE_ROOT = Path(__file__).resolve().parent.parent
 
 def _default_runtime_root() -> Path:
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Sora Watermark Cleaner"
-    return Path.home() / ".sora-watermark-cleaner"
+        return Path.home() / "Library" / "Application Support" / "MAC WATERMARK CLEANER"
+    return Path.home() / ".mac-watermark-cleaner"
 
 
 RUNTIME_ROOT = Path(
-    os.environ.get("SORA_WATERMARK_RUNTIME_DIR", str(_default_runtime_root()))
+    os.environ.get("MAC_WATERMARK_RUNTIME_DIR")
+    or os.environ.get("SORA_WATERMARK_RUNTIME_DIR")
+    or str(_default_runtime_root())
 ).expanduser()
 RUNTIME_ROOT.mkdir(exist_ok=True, parents=True)
 
@@ -29,10 +31,9 @@ STATIC_RESOURCES_DIR = SOURCE_ROOT / "resources"
 MODELS_DIR = RUNTIME_ROOT / "Models"
 CHECKPOINT_DIR = MODELS_DIR / "checkpoints"
 OUTPUT_DIR = Path(
-    os.environ.get(
-        "SORA_WATERMARK_OUTPUT_DIR",
-        str(Path.home() / "Movies" / "Sora Watermark Cleaner"),
-    )
+    os.environ.get("MAC_WATERMARK_OUTPUT_DIR")
+    or os.environ.get("SORA_WATERMARK_OUTPUT_DIR")
+    or str(Path.home() / "Movies" / "MAC WATERMARK CLEANER")
 ).expanduser()
 WORKING_DIR = RUNTIME_ROOT / "Working"
 LOGS_PATH = RUNTIME_ROOT / "Logs"
@@ -91,8 +92,10 @@ FRONTUI_DIST_DIR = FRONTUI_DIR / "dist"
 FRONTUI_DIST_DIR_ASSETS = FRONTUI_DIST_DIR / "assets"
 FRONTUI_DIST_DIR_INDEX_HTML = FRONTUI_DIST_DIR / "index.html"
 
-ENABLE_E2FGVI_HQ_TORCH_COMPILE = os.environ.get(
-    "SORA_ENABLE_TORCH_COMPILE", "0"
+ENABLE_E2FGVI_HQ_TORCH_COMPILE = (
+    os.environ.get("MAC_WATERMARK_ENABLE_TORCH_COMPILE")
+    or os.environ.get("SORA_ENABLE_TORCH_COMPILE")
+    or "0"
 ).lower() in {"1", "true", "yes"}
 TORCH_COMPILE_DIR = CACHE_DIR / "torch_compile"
 E2FGVI_HQ_TORCH_COMPILE_DIR = TORCH_COMPILE_DIR / "e2fgvi_hq"

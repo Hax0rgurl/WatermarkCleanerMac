@@ -1,4 +1,4 @@
-"""Universal DeMark engine embedded in Sora Watermark Cleaner.
+"""Universal DeMark engine embedded in MAC WATERMARK CLEANER.
 
 Derived from linkedlist771/DeMark-World under the MIT License. The macOS
 runtime, dependency loading, and compatibility surface were modified here.

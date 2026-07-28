@@ -14,8 +14,8 @@ license file and includes its complete text at
 
 Modified files carry module-level notices where practical. Changes include
 macOS-safe writable paths, deferred optional GPU imports, a small LaMa runtime,
-clearer download errors, OpenCV-based metadata loading, and the Sora-branded
-desktop/bootstrap experience.
+clearer download errors, OpenCV-based metadata loading, and the
+MAC WATERMARK CLEANER desktop/bootstrap experience.
 
 ## SoraWatermarkCleaner
 

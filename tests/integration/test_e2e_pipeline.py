@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-End-to-end integration tests for SoraWatermarkCleaner pipeline.
+End-to-end integration tests for the MAC WATERMARK CLEANER pipeline.
 
 Tests the complete pipeline with all optimizations:
 1. Video loading

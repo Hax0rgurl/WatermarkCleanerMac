@@ -1,7 +1,7 @@
 [project]
-name = "sora-watermark-cleaner"
-version = "1.0.2"
-description = "Mac-friendly Sora Watermark Cleaner powered by DeMark-World"
+name = "mac-watermark-cleaner"
+version = "1.0.3"
+description = "Universal Mac watermark cleaner powered by DeMark-World"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -43,6 +43,7 @@ dev = [
 ]
 
 [project.scripts]
+mac-watermark-cleaner = "demark_world.cli:main"
 sora-watermark-cleaner = "demark_world.cli:main"
 
 [tool.pytest.ini_options]

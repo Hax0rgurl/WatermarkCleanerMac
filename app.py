@@ -1,7 +1,7 @@
-"""Sora Watermark Cleaner macOS web interface.
+"""MAC WATERMARK CLEANER macOS web interface.
 
-The processing engine is the newer universal DeMark-World implementation while
-the product name and simple Sora workflow are retained.
+The processing engine is the universal DeMark-World implementation, with a
+simple workflow for Sora and other supported AI-video sources.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _process_upload(uploaded_file, engine: DeMarkWorld, file_index: int, total: 
     status = st.empty()
     final_path = _output_path(uploaded_file.name)
 
-    with tempfile.TemporaryDirectory(prefix="sora-watermark-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="mac-watermark-cleaner-") as temporary:
         input_path = Path(temporary) / _safe_name(uploaded_file.name)
         input_path.write_bytes(uploaded_file.getvalue())
 
@@ -85,7 +85,7 @@ def _process_upload(uploaded_file, engine: DeMarkWorld, file_index: int, total: 
 
 def main() -> None:
     st.set_page_config(
-        page_title="Sora Watermark Cleaner",
+        page_title="MAC WATERMARK CLEANER",
         page_icon="🎬",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -94,7 +94,7 @@ def main() -> None:
     st.markdown(
         """
         <style>
-          .block-container {max-width: 1100px; padding-top: 2rem;}
+          .block-container {max-width: 1100px; min-width: 0; padding-top: 2rem;}
           .hero {
             padding: 1.7rem 2rem;
             border-radius: 22px;
@@ -103,12 +103,23 @@ def main() -> None:
             box-shadow: 0 18px 45px rgba(10, 30, 65, .18);
             margin-bottom: 1.5rem;
           }
-          .hero h1 {margin: 0; font-size: 2.4rem;}
-          .hero p {opacity: .84; font-size: 1.05rem; margin-bottom: 0;}
+          .hero h1 {
+            margin: 0;
+            font-size: clamp(1.65rem, 2.8vw, 2.4rem);
+            line-height: 1.12;
+            white-space: normal;
+            overflow-wrap: break-word;
+          }
+          .hero p {
+            opacity: .84;
+            font-size: 1.05rem;
+            margin-bottom: 0;
+            overflow-wrap: break-word;
+          }
           .small-note {font-size: .88rem; color: #667085;}
         </style>
         <div class="hero">
-          <h1>🎬 Sora Watermark Cleaner</h1>
+          <h1>🎬 MAC WATERMARK CLEANER</h1>
           <p>Now powered by DeMark-World’s universal detector for Sora, Veo,
           Runway, Pika, Kling, and other AI-video watermarks.</p>
         </div>

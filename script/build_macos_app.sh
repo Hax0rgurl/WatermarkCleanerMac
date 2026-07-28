@@ -2,19 +2,19 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="Sora Watermark Cleaner"
-VERSION="1.0.2"
+APP_NAME="MAC WATERMARK CLEANER"
+VERSION="1.0.3"
 IDENTIFIER="com.hax0rgurl.SoraWatermarkCleaner"
 BUILD_DIR="$ROOT_DIR/.build/macos"
 DIST_DIR="$ROOT_DIR/dist"
 FINAL_APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
-STAGING_ROOT="$(mktemp -d "${TMPDIR:-/private/tmp}/sora-package.XXXXXX")"
+STAGING_ROOT="$(mktemp -d "${TMPDIR:-/private/tmp}/mac-watermark-cleaner-package.XXXXXX")"
 APP_BUNDLE="$STAGING_ROOT/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 RESOURCES_DIR="$CONTENTS/Resources"
 ENGINE_DIR="$RESOURCES_DIR/engine"
-ZIP_PATH="$DIST_DIR/Sora-Watermark-Cleaner-macOS-arm64-v$VERSION.zip"
+ZIP_PATH="$DIST_DIR/MAC-WATERMARK-CLEANER-macOS-arm64-v$VERSION.zip"
 SWIFTC="${SWIFTC:-}"
 UV_SOURCE="${UV_SOURCE:-$HOME/pinokio/bin/miniforge/bin/uv}"
 diagnostic_runtime=""
@@ -98,7 +98,7 @@ payload = {
     "CFBundleName": app_name,
     "CFBundlePackageType": "APPL",
     "CFBundleShortVersionString": version,
-    "CFBundleVersion": "100",
+    "CFBundleVersion": "103",
     "LSMinimumSystemVersion": "14.0",
     "NSHighResolutionCapable": True,
     "NSPrincipalClass": "NSApplication",
@@ -124,8 +124,8 @@ if ! /usr/bin/vtool -show-build "$MACOS_DIR/$APP_NAME" | \
 fi
 "$MACOS_DIR/$APP_NAME" --self-test
 
-diagnostic_runtime="$(mktemp -d "${TMPDIR:-/tmp}/sora-diagnose.XXXXXX")"
-SORA_WATERMARK_RUNTIME_DIR="$diagnostic_runtime" \
+diagnostic_runtime="$(mktemp -d "${TMPDIR:-/tmp}/mac-watermark-cleaner-diagnose.XXXXXX")"
+MAC_WATERMARK_RUNTIME_DIR="$diagnostic_runtime" \
   /bin/bash "$RESOURCES_DIR/bootstrap_macos.sh" --diagnose
 
 (
@@ -139,7 +139,7 @@ if /usr/bin/unzip -Z1 "$ZIP_PATH" | \
   exit 1
 fi
 
-extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/sora-extract.XXXXXX")"
+extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/mac-watermark-cleaner-extract.XXXXXX")"
 /usr/bin/unzip -q "$ZIP_PATH" -d "$extract_dir"
 extracted_app="$extract_dir/$APP_NAME.app"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$extracted_app"

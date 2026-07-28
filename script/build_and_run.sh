@@ -3,10 +3,10 @@ set -euo pipefail
 
 MODE="${1:-run}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="Sora Watermark Cleaner"
+APP_NAME="MAC WATERMARK CLEANER"
 APP_BUNDLE="$ROOT_DIR/dist/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
-RUNTIME_LOG="$HOME/Library/Application Support/Sora Watermark Cleaner/Logs/launcher.log"
+RUNTIME_LOG="$HOME/Library/Application Support/MAC WATERMARK CLEANER/Logs/launcher.log"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 "$ROOT_DIR/script/build_macos_app.sh"
@@ -26,9 +26,9 @@ case "$MODE" in
     ;;
   --verify|verify)
     "$APP_BINARY" --self-test
-    diagnostic_runtime="$(mktemp -d "${TMPDIR:-/tmp}/sora-verify.XXXXXX")"
+    diagnostic_runtime="$(mktemp -d "${TMPDIR:-/tmp}/mac-watermark-cleaner-verify.XXXXXX")"
     trap 'rm -rf "$diagnostic_runtime"' EXIT
-    SORA_WATERMARK_RUNTIME_DIR="$diagnostic_runtime" \
+    MAC_WATERMARK_RUNTIME_DIR="$diagnostic_runtime" \
       /bin/bash "$APP_BUNDLE/Contents/Resources/bootstrap_macos.sh" --diagnose
     ;;
   *)

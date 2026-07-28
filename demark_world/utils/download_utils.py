@@ -37,7 +37,7 @@ def ensure_model_downloaded(
                 url,
                 stream=True,
                 timeout=(15, 300),
-                headers={"User-Agent": "Sora-Watermark-Cleaner-macOS/1.0.2"},
+                headers={"User-Agent": "MAC-WATERMARK-CLEANER-macOS/1.0.3"},
             ) as response:
                 response.raise_for_status()
                 total_size = int(response.headers.get("content-length", 0))

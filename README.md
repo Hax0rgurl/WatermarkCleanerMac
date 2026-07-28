@@ -1,4 +1,4 @@
-# Sora Watermark Cleaner for macOS
+# Watermark Cleaner for macOS
 
 Sora Watermark Cleaner is now powered by the newer
 [DeMark-World](https://github.com/linkedlist771/DeMark-World) engine. It keeps

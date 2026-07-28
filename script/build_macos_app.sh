@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Sora Watermark Cleaner"
-VERSION="1.0.1"
+VERSION="1.0.2"
 IDENTIFIER="com.hax0rgurl.SoraWatermarkCleaner"
 BUILD_DIR="$ROOT_DIR/.build/macos"
 DIST_DIR="$ROOT_DIR/dist"

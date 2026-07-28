@@ -159,7 +159,7 @@ class DeMarkWorld:
 
         output_video_path.parent.mkdir(parents=True, exist_ok=True)
         temp_output_path = output_video_path.parent / (
-            f".{output_video_path.name}.partial"
+            f".{output_video_path.stem}.partial{output_video_path.suffix}"
         )
         temp_output_path.unlink(missing_ok=True)
 
@@ -434,7 +434,7 @@ class DeMarkWorld:
                 f"Refusing to overwrite existing output: {output_video_path}"
             )
         merged_partial = output_video_path.parent / (
-            f".{output_video_path.name}.audio-partial"
+            f".{output_video_path.stem}.audio-partial{output_video_path.suffix}"
         )
         merged_partial.unlink(missing_ok=True)
         try:
@@ -447,7 +447,6 @@ class DeMarkWorld:
                     str(merged_partial),
                     vcodec="copy",
                     acodec="aac",
-                    shortest=None,
                 )
                 .overwrite_output()
                 .global_args("-loglevel", "error")

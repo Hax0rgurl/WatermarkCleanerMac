@@ -198,7 +198,7 @@ def test_progress_failure_aborts_outer_pipeline(monkeypatch, tmp_path: Path) -> 
 
     assert process.terminated
     assert not output_path.exists()
-    assert not (tmp_path / ".output.mp4.partial").exists()
+    assert not (tmp_path / ".output.partial.mp4").exists()
 
 
 def test_preexisting_output_is_never_modified(tmp_path: Path) -> None:
@@ -320,6 +320,7 @@ def test_all_undetected_frames_pass_through_end_to_end(
     engine.run(input_path, output_path, quiet=True)
 
     assert output_path.read_bytes() == b"encoded"
+    assert process.output_path == tmp_path / ".output.partial.mp4"
     assert bytes(process.stdin.data) == b"".join(frame.tobytes() for frame in frames)
 
 

@@ -21,7 +21,7 @@ Use the tool only with media you own or are authorized to modify.
 
 ## Install the Mac app
 
-1. Download `Sora-Watermark-Cleaner-macOS-arm64-v1.0.1.zip` from the GitHub
+1. Download `Sora-Watermark-Cleaner-macOS-arm64-v1.0.2.zip` from the GitHub
    release.
 2. Unzip it and drag **Sora Watermark Cleaner.app** to Applications.
 3. Open the app. First setup needs internet access and may take several minutes.
@@ -51,7 +51,7 @@ runtime is managed CPython 3.12.13.
 Build outputs:
 
 - `dist/Sora Watermark Cleaner.app`
-- `dist/Sora-Watermark-Cleaner-macOS-arm64-v1.0.1.zip`
+- `dist/Sora-Watermark-Cleaner-macOS-arm64-v1.0.2.zip`
 
 To run the dedicated Mac/DeMark tests after the private runtime is provisioned:
 

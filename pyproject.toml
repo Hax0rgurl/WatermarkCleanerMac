@@ -1,6 +1,6 @@
 [project]
 name = "sora-watermark-cleaner"
-version = "1.0.1"
+version = "1.0.2"
 description = "Mac-friendly Sora Watermark Cleaner powered by DeMark-World"
 readme = "README.md"
 license = "Apache-2.0"

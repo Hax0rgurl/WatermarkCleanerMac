@@ -23,7 +23,7 @@ Use the tool only with media you own or are authorized to modify.
 
 ## Install the Mac app
 
-1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v1.0.3.zip` from the GitHub
+1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v1.0.4.zip` from the GitHub
    release.
 2. Unzip it and drag **MAC WATERMARK CLEANER.app** to Applications.
 3. Open the app. First setup needs internet access and may take several minutes.
@@ -53,7 +53,7 @@ runtime is managed CPython 3.12.13.
 Build outputs:
 
 - `dist/MAC WATERMARK CLEANER.app`
-- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.0.3.zip`
+- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.0.4.zip`
 
 To run the dedicated Mac/DeMark tests after the private runtime is provisioned:
 

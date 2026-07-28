@@ -1,8 +1,120 @@
 import AppKit
 import Darwin
 import Foundation
+import UniformTypeIdentifiers
+import WebKit
 
 private let appName = "MAC WATERMARK CLEANER"
+private let supportedVideoExtensions = [
+    "mp4", "mov", "m4v", "avi", "mkv", "webm",
+]
+
+private struct SourceRecord: Codable, Equatable, Hashable {
+    let path: String
+    let device: UInt64
+    let inode: UInt64
+    let file_type: UInt32
+    let size: Int64
+    let mtime_ns: Int64
+
+    static func capture(_ url: URL) throws -> SourceRecord {
+        let normalized = url.standardizedFileURL
+        var details = stat()
+        let status = normalized.path.withCString { pointer in
+            lstat(pointer, &details)
+        }
+        guard status == 0 else {
+            throw NSError(
+                domain: NSPOSIXErrorDomain,
+                code: Int(errno),
+                userInfo: [
+                    NSLocalizedDescriptionKey: "The selected file is unavailable.",
+                ]
+            )
+        }
+        let fileType = UInt32(details.st_mode & S_IFMT)
+        guard fileType == UInt32(S_IFREG) else {
+            throw NSError(
+                domain: "MACWatermarkCleaner.Selection",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Only regular video files can be queued. " +
+                        "Aliases, symbolic links, and folders are not accepted.",
+                ]
+            )
+        }
+        let modified =
+            Int64(details.st_mtimespec.tv_sec) * 1_000_000_000
+            + Int64(details.st_mtimespec.tv_nsec)
+        return SourceRecord(
+            path: normalized.path,
+            device: UInt64(details.st_dev),
+            inode: UInt64(details.st_ino),
+            file_type: fileType,
+            size: Int64(details.st_size),
+            mtime_ns: modified
+        )
+    }
+}
+
+private struct SelectionManifest: Codable {
+    let version: Int
+    let selected_at: String
+    let sources: [SourceRecord]
+}
+
+private enum Palette {
+    static let void = NSColor(calibratedRed: 0.027, green: 0.024, blue: 0.067, alpha: 1)
+    static let panel = NSColor(calibratedRed: 0.102, green: 0, blue: 0.2, alpha: 0.82)
+    static let pink = NSColor(calibratedRed: 1, green: 0, blue: 0.431, alpha: 1)
+    static let cyan = NSColor(calibratedRed: 0, green: 0.961, blue: 1, alpha: 1)
+    static let violet = NSColor(calibratedRed: 0.514, green: 0.22, blue: 0.925, alpha: 1)
+    static let text = NSColor(calibratedWhite: 0.97, alpha: 1)
+    static let muted = NSColor(calibratedRed: 0.78, green: 0.72, blue: 0.85, alpha: 1)
+    static let acid = NSColor(calibratedRed: 0.224, green: 1, blue: 0.078, alpha: 1)
+}
+
+private final class VaporwaveBackdropView: NSView {
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        Palette.void.setFill()
+        bounds.fill()
+
+        let haze = NSGradient(colors: [
+            Palette.violet.withAlphaComponent(0.32),
+            Palette.pink.withAlphaComponent(0.08),
+            NSColor.clear,
+        ])
+        haze?.draw(
+            fromCenter: NSPoint(x: bounds.midX, y: -60),
+            radius: 0,
+            toCenter: NSPoint(x: bounds.midX, y: bounds.height * 0.7),
+            radius: bounds.width * 0.7,
+            options: []
+        )
+
+        let grid = NSBezierPath()
+        let spacing: CGFloat = 24
+        var x: CGFloat = 0
+        while x <= bounds.width {
+            grid.move(to: NSPoint(x: x, y: 0))
+            grid.line(to: NSPoint(x: x, y: bounds.height))
+            x += spacing
+        }
+        var y: CGFloat = 0
+        while y <= bounds.height {
+            grid.move(to: NSPoint(x: 0, y: y))
+            grid.line(to: NSPoint(x: bounds.width, y: y))
+            y += spacing
+        }
+        grid.lineWidth = 0.5
+        Palette.cyan.withAlphaComponent(0.055).setStroke()
+        grid.stroke()
+    }
+}
 
 private func resourceURL() -> URL {
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
@@ -17,7 +129,9 @@ private func runSelfTest() -> Never {
     let required = [
         resources.appendingPathComponent("bootstrap_macos.sh"),
         resources.appendingPathComponent("engine/app.py"),
+        resources.appendingPathComponent("engine/demark_world/completion.py"),
         resources.appendingPathComponent("engine/requirements-macos.lock"),
+        resources.appendingPathComponent("tools/trash-item"),
         resources.appendingPathComponent("THIRD_PARTY_NOTICES.md"),
     ]
     for path in required where !FileManager.default.fileExists(atPath: path.path) {
@@ -32,30 +146,57 @@ if CommandLine.arguments.contains("--self-test") {
     runSelfTest()
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+    private enum ContentMode {
+        case loading
+        case cleaner
+        case diagnostics
+    }
+
     private var window: NSWindow!
+    private var loadingView: NSView!
+    private var webView: WKWebView!
+    private var diagnosticsView: NSView!
     private var statusLabel: NSTextField!
+    private var selectionLabel: NSTextField!
     private var logView: NSTextView!
     private var spinner: NSProgressIndicator!
-    private var openButton: NSButton!
+    private var diagnosticsButton: NSButton!
+    private var chooseButton: NSButton!
     private var process: Process?
     private var uiURL: URL?
-    private lazy var launcherLogURL: URL = {
+    private var contentMode = ContentMode.loading
+    private var isTerminating = false
+    private var selectionTimer: Timer?
+
+    private lazy var runtimeRootURL: URL = {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(
-                "Library/Application Support/MAC WATERMARK CLEANER/Logs/launcher.log"
+                "Library/Application Support/MAC WATERMARK CLEANER",
+                isDirectory: true
             )
+    }()
+    private lazy var selectionManifestURL: URL = {
+        runtimeRootURL.appendingPathComponent(
+            "Selections/current.json",
+            isDirectory: false
+        )
+    }()
+    private lazy var launcherLogURL: URL = {
+        runtimeRootURL.appendingPathComponent("Logs/launcher.log")
     }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        buildWindow()
         NSApp.setActivationPolicy(.regular)
+        buildWindow()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         startBackend()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        isTerminating = true
+        selectionTimer?.invalidate()
         if let process, process.isRunning {
             process.terminate()
             let deadline = Date().addingTimeInterval(3)
@@ -76,108 +217,341 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildWindow() {
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 1120, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = appName
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.backgroundColor = Palette.void
         window.center()
-        window.minSize = NSSize(width: 620, height: 400)
+        window.minSize = NSSize(width: 820, height: 600)
 
-        let content = NSView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        window.contentView = content
+        let root = VaporwaveBackdropView()
+        root.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView = root
 
-        let title = NSTextField(labelWithString: appName)
-        title.font = .systemFont(ofSize: 25, weight: .bold)
+        let header = NSView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        header.wantsLayer = true
+        header.layer?.backgroundColor = Palette.void.withAlphaComponent(0.92).cgColor
+        header.layer?.borderColor = Palette.cyan.withAlphaComponent(0.34).cgColor
+        header.layer?.borderWidth = 1
+
+        let brand = NSTextField(labelWithString: appName)
+        brand.font = .monospacedSystemFont(ofSize: 16, weight: .bold)
+        brand.textColor = Palette.text
+        brand.translatesAutoresizingMaskIntoConstraints = false
+
+        let brandAccent = NSTextField(labelWithString: "// PRIVATE RESTORATION")
+        brandAccent.font = .monospacedSystemFont(ofSize: 9, weight: .semibold)
+        brandAccent.textColor = Palette.cyan
+        brandAccent.translatesAutoresizingMaskIntoConstraints = false
+
+        selectionLabel = NSTextField(labelWithString: "NO SOURCE QUEUE")
+        selectionLabel.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
+        selectionLabel.textColor = Palette.muted
+        selectionLabel.alignment = .right
+        selectionLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        chooseButton = makeButton(
+            title: "CHOOSE VIDEOS",
+            action: #selector(chooseVideos),
+            accent: Palette.pink
+        )
+        let outputButton = makeButton(
+            title: "OUTPUT",
+            action: #selector(openOutputFolder),
+            accent: Palette.cyan
+        )
+        diagnosticsButton = makeButton(
+            title: "DIAGNOSTICS",
+            action: #selector(toggleDiagnostics),
+            accent: Palette.violet
+        )
+
+        let contentHost = NSView()
+        contentHost.translatesAutoresizingMaskIntoConstraints = false
+
+        loadingView = buildLoadingView()
+        loadingView.translatesAutoresizingMaskIntoConstraints = false
+
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.preferences.isElementFullscreenEnabled = true
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = self
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.isHidden = true
+
+        diagnosticsView = buildDiagnosticsView()
+        diagnosticsView.translatesAutoresizingMaskIntoConstraints = false
+        diagnosticsView.isHidden = true
+
+        root.addSubview(header)
+        root.addSubview(contentHost)
+        for view in [
+            brand, brandAccent, selectionLabel, chooseButton,
+            outputButton, diagnosticsButton,
+        ].compactMap({ $0 }) {
+            header.addSubview(view)
+        }
+        for view in [loadingView, webView, diagnosticsView].compactMap({ $0 }) {
+            contentHost.addSubview(view)
+        }
+
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: root.topAnchor),
+            header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            header.heightAnchor.constraint(equalToConstant: 74),
+
+            brand.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 24),
+            brand.topAnchor.constraint(equalTo: header.topAnchor, constant: 17),
+            brandAccent.leadingAnchor.constraint(equalTo: brand.leadingAnchor),
+            brandAccent.topAnchor.constraint(equalTo: brand.bottomAnchor, constant: 4),
+
+            diagnosticsButton.trailingAnchor.constraint(
+                equalTo: header.trailingAnchor,
+                constant: -18
+            ),
+            diagnosticsButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            outputButton.trailingAnchor.constraint(
+                equalTo: diagnosticsButton.leadingAnchor,
+                constant: -9
+            ),
+            outputButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            chooseButton.trailingAnchor.constraint(
+                equalTo: outputButton.leadingAnchor,
+                constant: -9
+            ),
+            chooseButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            selectionLabel.trailingAnchor.constraint(
+                equalTo: chooseButton.leadingAnchor,
+                constant: -14
+            ),
+            selectionLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            selectionLabel.leadingAnchor.constraint(
+                greaterThanOrEqualTo: brand.trailingAnchor,
+                constant: 18
+            ),
+
+            contentHost.topAnchor.constraint(equalTo: header.bottomAnchor),
+            contentHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            contentHost.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            contentHost.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+
+            loadingView.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            loadingView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            loadingView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            loadingView.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
+
+            webView.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
+
+            diagnosticsView.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            diagnosticsView.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            diagnosticsView.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            diagnosticsView.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
+        ])
+
+        refreshSelectionCount()
+        selectionTimer = Timer.scheduledTimer(
+            withTimeInterval: 1.5,
+            repeats: true
+        ) { [weak self] _ in
+            self?.refreshSelectionCount()
+        }
+    }
+
+    private func buildLoadingView() -> NSView {
+        let container = NSView()
+        let card = NSView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.wantsLayer = true
+        card.layer?.backgroundColor = Palette.panel.cgColor
+        card.layer?.borderColor = Palette.cyan.withAlphaComponent(0.75).cgColor
+        card.layer?.borderWidth = 1
+        card.layer?.cornerRadius = 2
+        card.layer?.shadowColor = Palette.pink.cgColor
+        card.layer?.shadowOpacity = 0.18
+        card.layer?.shadowRadius = 24
+
+        let kicker = NSTextField(labelWithString: "INITIALIZING // LOCAL SYSTEM")
+        kicker.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
+        kicker.textColor = Palette.cyan
+        kicker.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: "CLEAN VIDEO.\nKEEP CONTROL.")
+        title.font = .monospacedSystemFont(ofSize: 34, weight: .bold)
+        title.textColor = Palette.text
+        title.maximumNumberOfLines = 2
         title.translatesAutoresizingMaskIntoConstraints = false
 
         let subtitle = NSTextField(
             wrappingLabelWithString:
-                "Universal DeMark-World detection with a private, Mac-safe runtime."
+                "Preparing your private DeMark-World engine. " +
+                "The cleaner stays on this Mac."
         )
-        subtitle.textColor = .secondaryLabelColor
+        subtitle.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        subtitle.textColor = Palette.muted
         subtitle.translatesAutoresizingMaskIntoConstraints = false
 
         spinner = NSProgressIndicator()
         spinner.style = .spinning
-        spinner.controlSize = .small
+        spinner.controlSize = .regular
         spinner.startAnimation(nil)
         spinner.translatesAutoresizingMaskIntoConstraints = false
 
-        statusLabel = NSTextField(labelWithString: "Preparing first launch…")
-        statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        statusLabel = NSTextField(labelWithString: "PREPARING FIRST LAUNCH…")
+        statusLabel.font = .monospacedSystemFont(ofSize: 12, weight: .semibold)
+        statusLabel.textColor = Palette.acid
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        logView = NSTextView()
-        logView.isEditable = false
-        logView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        logView.string = "Starting…\n"
-        scroll.documentView = logView
-
-        openButton = NSButton(
-            title: "Open Cleaner",
-            target: self,
-            action: #selector(openInterface)
+        let safety = NSTextField(
+            wrappingLabelWithString:
+                "Originals move to macOS Trash only after a cleaned output " +
+                "passes video validation. Any failure keeps the source."
         )
-        openButton.bezelStyle = .rounded
-        openButton.isEnabled = false
-        openButton.translatesAutoresizingMaskIntoConstraints = false
+        safety.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        safety.textColor = Palette.muted
+        safety.translatesAutoresizingMaskIntoConstraints = false
 
-        let outputButton = NSButton(
-            title: "Open Output Folder",
-            target: self,
-            action: #selector(openOutputFolder)
-        )
-        outputButton.translatesAutoresizingMaskIntoConstraints = false
-
-        let runtimeButton = NSButton(
-            title: "Open App Data",
-            target: self,
-            action: #selector(openRuntimeFolder)
-        )
-        runtimeButton.translatesAutoresizingMaskIntoConstraints = false
-
-        let views: [NSView?] = [
-            title, subtitle, spinner, statusLabel, scroll,
-            openButton, outputButton, runtimeButton,
-        ]
-        for view in views.compactMap({ $0 }) {
-            content.addSubview(view)
+        container.addSubview(card)
+        for view in [
+            kicker, title, subtitle, spinner, statusLabel, safety,
+        ].compactMap({ $0 }) {
+            card.addSubview(view)
         }
 
         NSLayoutConstraint.activate([
-            title.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-            title.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 26),
-            title.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -26),
+            card.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            card.centerYAnchor.constraint(equalTo: container.centerYAnchor, constant: -10),
+            card.widthAnchor.constraint(lessThanOrEqualToConstant: 700),
+            card.widthAnchor.constraint(equalTo: container.widthAnchor, multiplier: 0.72),
 
-            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 5),
-            subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            subtitle.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            kicker.topAnchor.constraint(equalTo: card.topAnchor, constant: 40),
+            kicker.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 42),
+            kicker.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -42),
 
-            spinner.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 18),
-            spinner.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            title.topAnchor.constraint(equalTo: kicker.bottomAnchor, constant: 16),
+            title.leadingAnchor.constraint(equalTo: kicker.leadingAnchor),
+            title.trailingAnchor.constraint(equalTo: kicker.trailingAnchor),
+
+            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 18),
+            subtitle.leadingAnchor.constraint(equalTo: kicker.leadingAnchor),
+            subtitle.trailingAnchor.constraint(equalTo: kicker.trailingAnchor),
+
+            spinner.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 28),
+            spinner.leadingAnchor.constraint(equalTo: kicker.leadingAnchor),
             statusLabel.centerYAnchor.constraint(equalTo: spinner.centerYAnchor),
-            statusLabel.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 9),
-            statusLabel.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            statusLabel.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 12),
+            statusLabel.trailingAnchor.constraint(equalTo: kicker.trailingAnchor),
 
-            scroll.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 14),
+            safety.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 30),
+            safety.leadingAnchor.constraint(equalTo: kicker.leadingAnchor),
+            safety.trailingAnchor.constraint(equalTo: kicker.trailingAnchor),
+            safety.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -38),
+        ])
+        return container
+    }
+
+    private func buildDiagnosticsView() -> NSView {
+        let container = NSView()
+        let title = NSTextField(labelWithString: "SYSTEM DIAGNOSTICS")
+        title.font = .monospacedSystemFont(ofSize: 22, weight: .bold)
+        title.textColor = Palette.text
+        title.translatesAutoresizingMaskIntoConstraints = false
+
+        let caption = NSTextField(
+            wrappingLabelWithString:
+                "Startup details are hidden during normal use. " +
+                "They appear here when you ask for them or setup fails."
+        )
+        caption.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        caption.textColor = Palette.muted
+        caption.translatesAutoresizingMaskIntoConstraints = false
+
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .noBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.wantsLayer = true
+        scroll.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.62).cgColor
+        scroll.layer?.borderColor = Palette.violet.withAlphaComponent(0.7).cgColor
+        scroll.layer?.borderWidth = 1
+
+        logView = NSTextView()
+        logView.isEditable = false
+        logView.drawsBackground = false
+        logView.textColor = Palette.muted
+        logView.insertionPointColor = Palette.cyan
+        logView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        logView.textContainerInset = NSSize(width: 14, height: 14)
+        logView.string = "Starting private runtime…\n"
+        scroll.documentView = logView
+
+        let appDataButton = makeButton(
+            title: "OPEN APP DATA",
+            action: #selector(openRuntimeFolder),
+            accent: Palette.violet
+        )
+
+        for view in [title, caption, scroll, appDataButton] {
+            container.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(equalTo: container.topAnchor, constant: 30),
+            title.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 34),
+            title.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -34),
+            caption.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            caption.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            caption.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: 20),
             scroll.leadingAnchor.constraint(equalTo: title.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: title.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: openButton.topAnchor, constant: -18),
-
-            openButton.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            openButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -22),
-            outputButton.leadingAnchor.constraint(equalTo: openButton.trailingAnchor, constant: 10),
-            outputButton.centerYAnchor.constraint(equalTo: openButton.centerYAnchor),
-            runtimeButton.leadingAnchor.constraint(equalTo: outputButton.trailingAnchor, constant: 10),
-            runtimeButton.centerYAnchor.constraint(equalTo: openButton.centerYAnchor),
+            scroll.bottomAnchor.constraint(equalTo: appDataButton.topAnchor, constant: -18),
+            appDataButton.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            appDataButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -26),
         ])
+        return container
+    }
+
+    private func makeButton(
+        title: String,
+        action: Selector,
+        accent: NSColor
+    ) -> NSButton {
+        let button = NSButton(title: title, target: self, action: action)
+        button.font = .monospacedSystemFont(ofSize: 10, weight: .bold)
+        button.isBordered = false
+        button.contentTintColor = Palette.text
+        button.wantsLayer = true
+        button.layer?.backgroundColor = accent.withAlphaComponent(0.22).cgColor
+        button.layer?.borderColor = accent.withAlphaComponent(0.92).cgColor
+        button.layer?.borderWidth = 1
+        button.layer?.cornerRadius = 2
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
+        return button
+    }
+
+    private func setContentMode(_ mode: ContentMode) {
+        contentMode = mode
+        loadingView.isHidden = mode != .loading
+        webView.isHidden = mode != .cleaner
+        diagnosticsView.isHidden = mode != .diagnostics
+        switch mode {
+        case .diagnostics:
+            diagnosticsButton.title = uiURL == nil ? "BACK TO STARTUP" : "BACK TO CLEANER"
+        default:
+            diagnosticsButton.title = "DIAGNOSTICS"
+        }
     }
 
     private func appendLog(_ text: String) {
@@ -195,17 +569,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? handle.write(contentsOf: data)
             try? handle.close()
         }
+
         DispatchQueue.main.async {
             self.logView.textStorage?.append(NSAttributedString(string: text))
             self.logView.scrollToEndOfDocument(nil)
             if text.contains("[1/4]") {
-                self.statusLabel.stringValue = "Preparing private Python runtime…"
+                self.statusLabel.stringValue = "PREPARING PRIVATE PYTHON RUNTIME…"
             } else if text.contains("[2/4]") {
-                self.statusLabel.stringValue = "Installing app components…"
+                self.statusLabel.stringValue = "INSTALLING APP COMPONENTS…"
             } else if text.contains("[3/4]") {
-                self.statusLabel.stringValue = "Configuring video tools…"
+                self.statusLabel.stringValue = "CONFIGURING VIDEO TOOLS…"
             } else if text.contains("[4/4]") {
-                self.statusLabel.stringValue = "Starting the cleaner…"
+                self.statusLabel.stringValue = "STARTING CLEANER…"
             }
             for line in text.split(separator: "\n") {
                 if line.hasPrefix("MAC_WATERMARK_UI_URL="),
@@ -225,6 +600,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
         task.arguments = [script.path, "serve"]
         task.currentDirectoryURL = resourceURL()
+        var environment = ProcessInfo.processInfo.environment
+        environment["MAC_WATERMARK_SELECTION_FILE"] = selectionManifestURL.path
+        environment["MAC_WATERMARK_TRASH_HELPER"] = resourceURL()
+            .appendingPathComponent("tools/trash-item").path
+        task.environment = environment
 
         let pipe = Pipe()
         task.standardOutput = pipe
@@ -238,16 +618,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         task.terminationHandler = { [weak self] process in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, !self.isTerminating else { return }
                 self.spinner.stopAnimation(nil)
-                if process.terminationStatus != 0 {
-                    self.statusLabel.stringValue =
-                        "Setup stopped. Read the last error below, then reopen the app."
-                    self.appendLog(
-                        "\nThe cleaner exited with status \(process.terminationStatus). " +
-                        "First-time setup requires internet access; originals were untouched.\n"
-                    )
-                }
+                self.statusLabel.stringValue = "BACKEND STOPPED // CHECK JOB RECEIPTS"
+                self.appendLog(
+                    "\nThe cleaner exited with status \(process.terminationStatus). " +
+                    "Review the cleanup audit and current source/Trash locations " +
+                    "before retrying an interrupted job.\n"
+                )
+                self.setContentMode(.diagnostics)
             }
         }
 
@@ -256,24 +635,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             process = task
         } catch {
             spinner.stopAnimation(nil)
-            statusLabel.stringValue = "Could not start the private runtime."
+            statusLabel.stringValue = "PRIVATE RUNTIME COULD NOT START"
             appendLog("ERROR: \(error.localizedDescription)\n")
+            setContentMode(.diagnostics)
         }
     }
 
     private func waitUntilReady(url: URL, attempt: Int) {
-        guard attempt < 60 else {
-            statusLabel.stringValue = "Server is taking longer than expected. Check the log."
+        guard attempt < 120 else {
+            statusLabel.stringValue = "STARTUP TIMED OUT // VIEW DIAGNOSTICS"
+            appendLog("ERROR: Local cleaner did not become healthy within 60 seconds.\n")
+            setContentMode(.diagnostics)
             return
         }
-        URLSession.shared.dataTask(with: url) { [weak self] _, response, _ in
+        let health = url.appendingPathComponent("_stcore/health")
+        URLSession.shared.dataTask(with: health) { [weak self] _, response, _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if let http = response as? HTTPURLResponse, (200..<500).contains(http.statusCode) {
+                if let http = response as? HTTPURLResponse, http.statusCode == 200 {
                     guard let self else { return }
                     self.spinner.stopAnimation(nil)
-                    self.statusLabel.stringValue = "Ready. Originals are never deleted."
-                    self.openButton.isEnabled = true
-                    self.openInterface()
+                    self.statusLabel.stringValue = "READY // CLEANED COPY REMAINS"
+                    self.loadCleaner(reloadingSelection: false)
                 } else {
                     self?.waitUntilReady(url: url, attempt: attempt + 1)
                 }
@@ -281,9 +663,125 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }.resume()
     }
 
-    @objc private func openInterface() {
-        if let uiURL {
-            NSWorkspace.shared.open(uiURL)
+    private func loadCleaner(reloadingSelection: Bool) {
+        guard let uiURL else { return }
+        var components = URLComponents(url: uiURL, resolvingAgainstBaseURL: false)
+        if reloadingSelection {
+            components?.queryItems = [
+                URLQueryItem(
+                    name: "selection",
+                    value: String(Int(Date().timeIntervalSince1970 * 1000))
+                ),
+            ]
+        }
+        let url = components?.url ?? uiURL
+        setContentMode(.cleaner)
+        webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+    }
+
+    private func refreshSelectionCount() {
+        guard let data = try? Data(contentsOf: selectionManifestURL),
+              let payload = try? JSONDecoder().decode(
+                  SelectionManifest.self,
+                  from: data
+              ) else {
+            selectionLabel.stringValue = "NO SOURCE QUEUE"
+            return
+        }
+        let valid = payload.sources.filter { record in
+            (try? SourceRecord.capture(URL(fileURLWithPath: record.path))) == record
+        }
+        selectionLabel.stringValue =
+            valid.count == 1 ? "1 VIDEO QUEUED" : "\(valid.count) VIDEOS QUEUED"
+    }
+
+    private func withSelectionManifestLock<T>(
+        _ body: () throws -> T
+    ) throws -> T {
+        let lockURL = selectionManifestURL.appendingPathExtension("lock")
+        try FileManager.default.createDirectory(
+            at: lockURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let descriptor = lockURL.path.withCString { pointer in
+            Darwin.open(pointer, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        }
+        guard descriptor >= 0 else {
+            throw NSError(
+                domain: NSPOSIXErrorDomain,
+                code: Int(errno),
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Could not lock the source queue.",
+                ]
+            )
+        }
+        defer {
+            _ = flock(descriptor, LOCK_UN)
+            _ = Darwin.close(descriptor)
+        }
+        guard flock(descriptor, LOCK_EX) == 0 else {
+            throw NSError(
+                domain: NSPOSIXErrorDomain,
+                code: Int(errno),
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Could not lock the source queue.",
+                ]
+            )
+        }
+        return try body()
+    }
+
+    @objc private func chooseVideos() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose videos to clean"
+        panel.prompt = "Add to Cleaner"
+        panel.message =
+            "After a cleaned copy is verified, each selected original moves to macOS Trash."
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = supportedVideoExtensions.compactMap {
+            UTType(filenameExtension: $0)
+        }
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, !panel.urls.isEmpty else { return }
+            do {
+                let records = try panel.urls.map(SourceRecord.capture)
+                let unique = Array(
+                    Dictionary(
+                        records.map { ("\($0.device):\($0.inode)", $0) },
+                        uniquingKeysWith: { first, _ in first }
+                    ).values
+                ).sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+                let manifest = SelectionManifest(
+                    version: 2,
+                    selected_at: ISO8601DateFormatter().string(from: Date()),
+                    sources: unique
+                )
+                try self.withSelectionManifestLock {
+                    let data = try JSONEncoder().encode(manifest)
+                    try data.write(
+                        to: self.selectionManifestURL,
+                        options: .atomic
+                    )
+                }
+                self.refreshSelectionCount()
+                if self.uiURL != nil {
+                    self.loadCleaner(reloadingSelection: true)
+                }
+            } catch {
+                self.appendLog("ERROR: Could not save source queue: \(error)\n")
+                self.setContentMode(.diagnostics)
+            }
+        }
+    }
+
+    @objc private func toggleDiagnostics() {
+        if contentMode == .diagnostics {
+            setContentMode(uiURL == nil ? .loading : .cleaner)
+        } else {
+            setContentMode(.diagnostics)
         }
     }
 
@@ -298,16 +796,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openRuntimeFolder() {
-        let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(
-                "Library/Application Support/MAC WATERMARK CLEANER",
-                isDirectory: true
-            )
         try? FileManager.default.createDirectory(
-            at: path,
+            at: runtimeRootURL,
             withIntermediateDirectories: true
         )
-        NSWorkspace.shared.open(path)
+        NSWorkspace.shared.open(runtimeRootURL)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let destination = navigationAction.request.url,
+              let uiURL else {
+            decisionHandler(.allow)
+            return
+        }
+        let isLocal =
+            destination.host == uiURL.host
+            && destination.port == uiURL.port
+        if navigationAction.navigationType == .linkActivated && !isLocal {
+            NSWorkspace.shared.open(destination)
+            decisionHandler(.cancel)
+        } else {
+            decisionHandler(.allow)
+        }
     }
 }
 

@@ -325,13 +325,25 @@ def test_all_undetected_frames_pass_through_end_to_end(
     monkeypatch.setattr(
         engine,
         "merge_audio_track",
-        lambda _, temporary, final: engine._publish_no_clobber(temporary, final),
+        lambda _, temporary, final, working_directory=None, before_publish=None: (
+            engine._publish_no_clobber(
+                temporary,
+                final,
+                before_publish=before_publish,
+            )
+        ),
+    )
+    workspace = tmp_path / "Working" / "job-test"
+
+    engine.run(
+        input_path,
+        output_path,
+        quiet=True,
+        working_directory=workspace,
     )
 
-    engine.run(input_path, output_path, quiet=True)
-
     assert output_path.read_bytes() == b"encoded"
-    assert process.output_path == tmp_path / ".output.partial.mp4"
+    assert process.output_path == workspace / "video.partial.mp4"
     assert bytes(process.stdin.data) == b"".join(frame.tobytes() for frame in frames)
 
 

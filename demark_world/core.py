@@ -139,6 +139,8 @@ class DeMarkWorld:
         output_video_path: Path,
         progress_callback: Callable[[int], None] | None = None,
         quiet: bool = False,
+        working_directory: Path | None = None,
+        before_publish: Callable[[Path, Path], None] | None = None,
     ) -> None:
         input_video_path = Path(input_video_path).expanduser()
         output_video_path = Path(output_video_path).expanduser()
@@ -158,9 +160,16 @@ class DeMarkWorld:
             raise ValueError(f"No readable video frames found in {input_video_path}")
 
         output_video_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_output_path = output_video_path.parent / (
-            f".{output_video_path.stem}.partial{output_video_path.suffix}"
-        )
+        if working_directory is None:
+            artifact_directory = output_video_path.parent
+            temp_name = f".{output_video_path.stem}.partial{output_video_path.suffix}"
+        else:
+            artifact_directory = Path(working_directory).expanduser()
+            artifact_directory.mkdir(parents=True, exist_ok=True)
+            if not os.path.isdir(artifact_directory) or os.path.islink(artifact_directory):
+                raise ValueError("Job working directory must be a real directory")
+            temp_name = "video.partial.mp4"
+        temp_output_path = artifact_directory / temp_name
         temp_output_path.unlink(missing_ok=True)
 
         output_options: dict[str, str] = {
@@ -231,11 +240,21 @@ class DeMarkWorld:
                 )
             if progress_callback:
                 progress_callback(95)
-            self.merge_audio_track(
-                input_video_path,
-                temp_output_path,
-                output_video_path,
-            )
+            if working_directory is None:
+                self.merge_audio_track(
+                    input_video_path,
+                    temp_output_path,
+                    output_video_path,
+                    before_publish=before_publish,
+                )
+            else:
+                self.merge_audio_track(
+                    input_video_path,
+                    temp_output_path,
+                    output_video_path,
+                    working_directory=artifact_directory,
+                    before_publish=before_publish,
+                )
             if progress_callback:
                 progress_callback(100)
         except BaseException:
@@ -427,15 +446,20 @@ class DeMarkWorld:
         input_video_path: Path,
         temp_output_path: Path,
         output_video_path: Path,
+        working_directory: Path | None = None,
+        before_publish: Callable[[Path, Path], None] | None = None,
     ) -> None:
         logger.info("Merging audio track…")
         if output_video_path.exists():
             raise FileExistsError(
                 f"Refusing to overwrite existing output: {output_video_path}"
             )
-        merged_partial = output_video_path.parent / (
-            f".{output_video_path.stem}.audio-partial{output_video_path.suffix}"
-        )
+        if working_directory is None:
+            merged_partial = output_video_path.parent / (
+                f".{output_video_path.stem}.audio-partial{output_video_path.suffix}"
+            )
+        else:
+            merged_partial = Path(working_directory) / "audio.partial.mp4"
         merged_partial.unlink(missing_ok=True)
         try:
             video = ffmpeg.input(str(temp_output_path))
@@ -452,19 +476,34 @@ class DeMarkWorld:
                 .global_args("-loglevel", "error")
                 .run(capture_stdout=True, capture_stderr=True)
             )
-            self._publish_no_clobber(merged_partial, output_video_path)
+            self._publish_no_clobber(
+                merged_partial,
+                output_video_path,
+                before_publish=before_publish,
+            )
             temp_output_path.unlink(missing_ok=True)
             logger.info(f"Saved cleaned video with audio: {output_video_path}")
         except ffmpeg.Error as exc:
             details = exc.stderr.decode(errors="replace") if exc.stderr else str(exc)
             logger.info(f"Keeping silent cleaned video; audio merge detail: {details}")
-            self._publish_no_clobber(temp_output_path, output_video_path)
+            self._publish_no_clobber(
+                temp_output_path,
+                output_video_path,
+                before_publish=before_publish,
+            )
         finally:
             merged_partial.unlink(missing_ok=True)
 
     @staticmethod
-    def _publish_no_clobber(source: Path, destination: Path) -> None:
+    def _publish_no_clobber(
+        source: Path,
+        destination: Path,
+        *,
+        before_publish: Callable[[Path, Path], None] | None = None,
+    ) -> None:
         """Atomically publish a same-volume file without replacing anything."""
+        if before_publish is not None:
+            before_publish(source, destination)
         try:
             os.link(source, destination)
         except FileExistsError as exc:

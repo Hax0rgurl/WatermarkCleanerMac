@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="MAC WATERMARK CLEANER"
-VERSION="1.0.4"
+VERSION="1.0.5"
 IDENTIFIER="com.hax0rgurl.SoraWatermarkCleaner"
 BUILD_DIR="$ROOT_DIR/.build/macos"
 DIST_DIR="$ROOT_DIR/dist"
@@ -15,6 +15,7 @@ MACOS_DIR="$CONTENTS/MacOS"
 RESOURCES_DIR="$CONTENTS/Resources"
 ENGINE_DIR="$RESOURCES_DIR/engine"
 ZIP_PATH="$DIST_DIR/MAC-WATERMARK-CLEANER-macOS-arm64-v$VERSION.zip"
+CHECKSUM_PATH="$ZIP_PATH.sha256"
 SWIFTC="${SWIFTC:-}"
 UV_SOURCE="${UV_SOURCE:-$HOME/pinokio/bin/miniforge/bin/uv}"
 diagnostic_runtime=""
@@ -32,7 +33,7 @@ cleanup() {
 trap cleanup EXIT
 export COPYFILE_DISABLE=1
 
-rm -rf "$BUILD_DIR" "$FINAL_APP_BUNDLE" "$ZIP_PATH"
+rm -rf "$BUILD_DIR" "$FINAL_APP_BUNDLE" "$ZIP_PATH" "$CHECKSUM_PATH"
 mkdir -p "$BUILD_DIR" "$MACOS_DIR" "$ENGINE_DIR" "$RESOURCES_DIR/tools" "$DIST_DIR"
 mkdir -p "$BUILD_DIR/ModuleCache"
 
@@ -43,6 +44,8 @@ swift_args=(
   -module-cache-path "$BUILD_DIR/ModuleCache"
   -framework AppKit
   -framework Foundation
+  -framework UniformTypeIdentifiers
+  -framework WebKit
   -o "$MACOS_DIR/$APP_NAME"
   "$ROOT_DIR/macos/Launcher.swift"
 )
@@ -50,6 +53,21 @@ if [[ -n "$SWIFTC" ]]; then
   "$SWIFTC" "${swift_args[@]}"
 else
   /usr/bin/xcrun swiftc "${swift_args[@]}"
+fi
+
+echo "Compiling recoverable Trash helper…"
+trash_helper_args=(
+  -O
+  -target arm64-apple-macos14.0
+  -module-cache-path "$BUILD_DIR/ModuleCache"
+  -framework Foundation
+  -o "$RESOURCES_DIR/tools/trash-item"
+  "$ROOT_DIR/macos/TrashHelper.swift"
+)
+if [[ -n "$SWIFTC" ]]; then
+  "$SWIFTC" "${trash_helper_args[@]}"
+else
+  /usr/bin/xcrun swiftc "${trash_helper_args[@]}"
 fi
 
 echo "Staging immutable engine source…"
@@ -98,7 +116,7 @@ payload = {
     "CFBundleName": app_name,
     "CFBundlePackageType": "APPL",
     "CFBundleShortVersionString": version,
-    "CFBundleVersion": "104",
+    "CFBundleVersion": "105",
     "LSMinimumSystemVersion": "14.0",
     "NSHighResolutionCapable": True,
     "NSPrincipalClass": "NSApplication",
@@ -112,6 +130,7 @@ echo "Signing and validating bundle…"
 if [[ -x "$RESOURCES_DIR/tools/uv" ]]; then
   /usr/bin/codesign --force --sign - "$RESOURCES_DIR/tools/uv"
 fi
+/usr/bin/codesign --force --sign - "$RESOURCES_DIR/tools/trash-item"
 /usr/bin/codesign --force --sign - "$MACOS_DIR/$APP_NAME"
 /usr/bin/codesign --force --deep --sign - "$APP_BUNDLE"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
@@ -132,6 +151,12 @@ MAC_WATERMARK_RUNTIME_DIR="$diagnostic_runtime" \
   cd "$STAGING_ROOT"
   /usr/bin/zip -q -X -r -y "$ZIP_PATH" "$APP_NAME.app"
 )
+(
+  cd "$DIST_DIR"
+  /usr/bin/shasum -a 256 "$(basename "$ZIP_PATH")" \
+    > "$(basename "$CHECKSUM_PATH")"
+  /usr/bin/shasum -a 256 -c "$(basename "$CHECKSUM_PATH")"
+)
 /usr/bin/unzip -t "$ZIP_PATH" >/dev/null
 if /usr/bin/unzip -Z1 "$ZIP_PATH" | \
   /usr/bin/grep -Eq '(^|/)__MACOSX/|(^|/)\._'; then
@@ -148,7 +173,26 @@ extracted_app="$extract_dir/$APP_NAME.app"
 /usr/bin/ditto --norsrc --noextattr --noacl \
   "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
 /usr/bin/xattr -cr "$FINAL_APP_BUNDLE"
-/usr/bin/codesign --verify --deep --strict --verbose=2 "$FINAL_APP_BUNDLE"
+# File Provider may immediately restore metadata on an app copied into an
+# iCloud-backed workspace. The fresh-unzipped release above is the canonical
+# distribution validation; retry the local convenience copy narrowly and
+# report workspace-only metadata without invalidating the already-proven ZIP.
+/usr/bin/xattr -d com.apple.FinderInfo "$FINAL_APP_BUNDLE" 2>/dev/null || true
+/usr/bin/xattr -d com.apple.fileprovider.fpfs#P "$FINAL_APP_BUNDLE" 2>/dev/null || true
+final_validation_log="$BUILD_DIR/final-codesign.log"
+if ! /usr/bin/codesign --verify --deep --strict --verbose=2 \
+  "$FINAL_APP_BUNDLE" 2> "$final_validation_log"; then
+  if /usr/bin/grep -q \
+    'resource fork, Finder information, or similar detritus not allowed' \
+    "$final_validation_log"; then
+    echo "WARNING: The workspace File Provider restored Finder metadata on the local app copy."
+    echo "The canonical ZIP passed strict signing after a fresh extraction outside the workspace."
+  else
+    /bin/cat "$final_validation_log" >&2
+    exit 1
+  fi
+fi
 
 echo "APP=$FINAL_APP_BUNDLE"
 echo "ZIP=$ZIP_PATH"
+echo "CHECKSUM=$CHECKSUM_PATH"

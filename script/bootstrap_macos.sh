@@ -27,6 +27,7 @@ MARKER_FILE="$RUNTIME_DIR/runtime-requirements.sha256"
 REQUIREMENTS="$ENGINE_DIR/requirements-macos.lock"
 
 mkdir -p "$RUNTIME_DIR" "$BIN_DIR" "$LOG_DIR" "$RUNTIME_DIR/Cache"
+mkdir -p "$RUNTIME_DIR/Selections"
 touch "$LOG_FILE"
 printf '\n[%s] Launcher session: %s\n' \
   "$(/bin/date '+%Y-%m-%d %H:%M:%S')" "$MODE" >> "$LOG_FILE"
@@ -40,6 +41,7 @@ else
 fi
 export MAC_WATERMARK_OUTPUT_DIR="$OUTPUT_DIR"
 export SORA_WATERMARK_OUTPUT_DIR="$OUTPUT_DIR"
+export MAC_WATERMARK_SELECTION_FILE="${MAC_WATERMARK_SELECTION_FILE:-$RUNTIME_DIR/Selections/current.json}"
 export UV_CACHE_DIR="$RUNTIME_DIR/Cache/uv"
 export UV_PYTHON_INSTALL_DIR="$RUNTIME_DIR/ManagedPython"
 export UV_MANAGED_PYTHON=1
@@ -136,6 +138,8 @@ echo "[3/4] Configuring bundled video tools…"
 ffmpeg_executable="$("$VENV_DIR/bin/python" -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')"
 ln -sf "$ffmpeg_executable" "$BIN_DIR/ffmpeg"
 export PATH="$BIN_DIR:$VENV_DIR/bin:$PATH"
+export MAC_WATERMARK_FFMPEG="$BIN_DIR/ffmpeg"
+export MAC_WATERMARK_TRASH_HELPER="${MAC_WATERMARK_TRASH_HELPER:-$RESOURCES_DIR/tools/trash-item}"
 
 if [[ "$MODE" == "--test" || "$MODE" == "test" ]]; then
   "$VENV_DIR/bin/python" - <<'PY'
@@ -145,6 +149,7 @@ import sys
 import torch
 import ultralytics
 from demark_world import core
+from demark_world import completion
 from demark_world.configs import OUTPUT_DIR, RUNTIME_ROOT
 from demark_world.schemas import CleanerType
 import cv2
@@ -172,6 +177,7 @@ assert torch.__version__
 assert ultralytics.__version__
 assert ffmpeg.input
 assert core.DeMarkWorld
+assert completion.finalize_cleaned_video
 assert app.main
 print("RUNTIME_IMPORT_OK")
 PY

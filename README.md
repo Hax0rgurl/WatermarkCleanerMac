@@ -41,6 +41,10 @@ The separate vision runtime reuses complete compatible model caches in the app, 
 
 The model catalog changes with tested app releases; the app does not automatically execute whichever model happens to be newest online. Apple Vision OCR also supports scanning without the optional vision model. An already-running OpenAI-compatible vision server on this Mac can be selected using its loopback URL and model name. External vision servers and redirects are rejected; video frames stay local.
 
+## Upstream contribution
+
+[DeMark-World PR #11](https://github.com/linkedlist771/DeMark-World/pull/11) contributes an opt-in LaMa API for reviewed timed regions, protected compositing, streamed MP4 output, and lazy backend loading. It leaves the original detector workflow available. The full Mac scanner and native interface remain in this repository.
+
 ## Limits and file handling
 
 Automatic scanning requires readable matching branding. It can miss unreadable symbols, brief appearances between samples, heavily obscured marks, or marks that move substantially. Manual timed regions remain available. LaMa reconstructs the selected pixels; the result depends on scene detail and mask size. Review the finished film before treating it as restored.

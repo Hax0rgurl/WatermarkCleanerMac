@@ -32,6 +32,7 @@ from demark_world.utils.imputation_utils import (
 from demark_world.utils.video_utils import VideoLoader, merge_frames_with_overlap
 from demark_world.watermark_cleaner import WaterMarkCleaner
 from demark_world.watermark_detector import DeMarkWorldDetector
+from demark_world.timed_regions import region_boxes, compile_regions, TimedRegion
 
 VIDEO_EXTENSIONS = [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm"]
 
@@ -56,10 +57,13 @@ class DeMarkWorld:
         use_bf16: bool = is_bf16_supported(),
         detector: Any | None = None,
         cleaner: Any | None = None,
+        automatic_detection: bool = True,
     ):
         if detect_batch_size < 1:
             raise ValueError("detect_batch_size must be at least 1")
-        self.detector = detector if detector is not None else DeMarkWorldDetector()
+        self.detector = detector if detector is not None else (
+            DeMarkWorldDetector() if automatic_detection else None
+        )
         self.cleaner = (
             cleaner
             if cleaner is not None
@@ -141,6 +145,7 @@ class DeMarkWorld:
         quiet: bool = False,
         working_directory: Path | None = None,
         before_publish: Callable[[Path, Path], None] | None = None,
+        watermark_regions: list | None = None,
     ) -> None:
         input_video_path = Path(input_video_path).expanduser()
         output_video_path = Path(output_video_path).expanduser()
@@ -158,6 +163,12 @@ class DeMarkWorld:
         total_frames = loader.total_frames
         if total_frames < 1 or width < 1 or height < 1:
             raise ValueError(f"No readable video frames found in {input_video_path}")
+        timed_regions = (
+            compile_regions(watermark_regions, width, height, total_frames)
+            if watermark_regions is not None else None
+        )
+        if timed_regions and self.cleaner_type != CleanerType.LAMA:
+            raise ValueError("Selected watermark areas currently require the LaMa cleaner.")
 
         output_video_path.parent.mkdir(parents=True, exist_ok=True)
         if working_directory is None:
@@ -199,12 +210,22 @@ class DeMarkWorld:
         )
 
         try:
-            bboxes, breakpoints = self._detect_bboxes(
-                input_video_path,
-                total_frames,
-                progress_callback,
-                quiet,
-            )
+            if timed_regions:
+                bboxes, breakpoints = [None] * total_frames, [0, total_frames]
+            else:
+                if self.detector is None:
+                    raise ValueError("Select watermark areas or enable automatic detection.")
+                bboxes, breakpoints = self._detect_bboxes(
+                    input_video_path,
+                    total_frames,
+                    progress_callback,
+                    quiet,
+                )
+                if not any(bbox is not None for bbox in bboxes):
+                    raise ValueError(
+                        "Automatic detection found no watermark. Use Select watermark area "
+                        "and draw a box around your logo. No cleaned file was created."
+                    )
             if self.cleaner_type == CleanerType.LAMA:
                 self._clean_lama(
                     input_video_path,
@@ -215,6 +236,7 @@ class DeMarkWorld:
                     process_out,
                     progress_callback,
                     quiet,
+                    timed_regions=timed_regions,
                 )
             elif self.cleaner_type == CleanerType.E2FGVI_HQ:
                 self._clean_temporal(
@@ -361,6 +383,8 @@ class DeMarkWorld:
         process_out: Any,
         progress_callback: Callable[[int], None] | None,
         quiet: bool,
+        manual_boxes: list[tuple[int, int, int, int]] | None = None,
+        timed_regions: list[TimedRegion] | None = None,
     ) -> None:
         for index, frame in enumerate(
             tqdm(
@@ -372,15 +396,24 @@ class DeMarkWorld:
         ):
             if index >= total_frames:
                 break
-            bbox = bboxes[index]
+            if timed_regions is not None:
+                boxes = [region.bbox for region in timed_regions if region.active(index)]
+            else:
+                boxes = manual_boxes or ([bboxes[index]] if bboxes[index] is not None else [])
             cleaned = frame
-            if bbox is not None:
+            for bbox in boxes:
                 x1, y1, x2, y2 = bbox
                 mask = np.zeros((height, width), dtype=np.uint8)
-                mask[max(0, y1) : min(height, y2), max(0, x1) : min(width, x2)] = 255
-                cleaned = self.cleaner.clean(frame, mask)
+                # Detection boxes can cut through translucent/antialiased logo
+                # edges. Include that fringe so it cannot survive inpainting.
+                padding = max(8, round(min(x2 - x1, y2 - y1) * 0.1))
+                mask[
+                    max(0, y1 - padding) : min(height, y2 + padding),
+                    max(0, x1 - padding) : min(width, x2 + padding),
+                ] = 255
+                cleaned = self.cleaner.clean(cleaned, mask)
             process_out.stdin.write(cleaned.astype(np.uint8).tobytes())
-            if progress_callback and index % 10 == 0:
+            if progress_callback:
                 progress_callback(50 + int((index / total_frames) * 45))
 
     def _clean_temporal(

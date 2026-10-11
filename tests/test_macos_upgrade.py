@@ -227,7 +227,7 @@ def test_preexisting_output_is_never_modified(tmp_path: Path) -> None:
     assert output_path.read_bytes() == b"keep-me"
 
 
-def test_all_undetected_frames_pass_through_end_to_end(
+def test_no_detections_never_publish_an_unchanged_video(
     monkeypatch, tmp_path: Path
 ) -> None:
     import demark_world.core as core
@@ -335,16 +335,19 @@ def test_all_undetected_frames_pass_through_end_to_end(
     )
     workspace = tmp_path / "Working" / "job-test"
 
-    engine.run(
-        input_path,
-        output_path,
-        quiet=True,
-        working_directory=workspace,
-    )
+    with pytest.raises(ValueError, match="Automatic detection found no watermark"):
+        engine.run(
+            input_path,
+            output_path,
+            quiet=True,
+            working_directory=workspace,
+        )
 
-    assert output_path.read_bytes() == b"encoded"
+    assert not output_path.exists()
+    assert input_path.read_bytes() == b"video"
     assert process.output_path == workspace / "video.partial.mp4"
-    assert bytes(process.stdin.data) == b"".join(frame.tobytes() for frame in frames)
+    assert not process.output_path.exists()
+    assert not process.stdin.data
 
 
 class _FakeDownloadResponse:

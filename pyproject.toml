@@ -1,6 +1,6 @@
 [project]
 name = "mac-watermark-cleaner"
-version = "1.0.5"
+version = "1.1.1"
 description = "Universal Mac watermark cleaner powered by DeMark-World"
 readme = "README.md"
 license = "Apache-2.0"

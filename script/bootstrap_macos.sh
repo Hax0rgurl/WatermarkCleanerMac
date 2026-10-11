@@ -244,4 +244,5 @@ exec "$VENV_DIR/bin/python" -m streamlit run "$ENGINE_DIR/app.py" \
   --server.port "$port" \
   --server.headless true \
   --server.fileWatcherType none \
-  --browser.gatherUsageStats false
+  --browser.gatherUsageStats false \
+  --theme.base dark

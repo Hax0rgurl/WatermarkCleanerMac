@@ -1,57 +1,53 @@
 # MAC WATERMARK CLEANER
 
-MAC WATERMARK CLEANER is powered by the newer
-[DeMark-World](https://github.com/linkedlist771/DeMark-World) engine. It keeps
-the familiar, simple workflow while using DeMark-World's universal detector for
-watermarks from Sora, Veo, Runway, Pika, Kling, and other AI-video tools.
+A native Apple Silicon app powered by [DeMark-World](https://github.com/linkedlist771/DeMark-World), with automatic named-watermark scanning and editable timed regions.
 
-The Mac app:
+[Download the latest Mac app](https://github.com/Hax0rgurl/WatermarkCleanerMac/releases/latest) · [Changes in 1.1.1](CHANGELOG.md) · [Verification and limitations](docs/VERIFICATION.md)
 
-- embeds the cleaner in one native vaporwave window instead of leaving a
-  launcher beside a browser;
-- accepts real source paths through its native **Choose Videos** control;
-- decodes every frame and audio packet in each cleaned output with the bundled
-  FFmpeg runtime before moving that job's original to recoverable macOS Trash;
-- pins the selected file's device, inode, type, size, and modification time,
-  then rechecks that identity in both Python and the native Trash helper;
-- never sends a source to Trash after processing failures, invalid outputs,
-  output collisions, or a changed/reused source path;
-- stores interrupted and failed per-job working files under App Data → Failed
-  Jobs so they cannot be mistaken for finished videos;
-- records the cleaned output's exact inode before publishing it; after a crash,
-  startup quarantines an identity-matched unverified output only when the
-  selected source is still present, while ambiguous post-Trash copies are kept;
-- saves cleaned copies to `~/Movies/MAC WATERMARK CLEANER`;
-- keeps Python, models, caches, logs, and settings under
-  `~/Library/Application Support/MAC WATERMARK CLEANER`;
-- does not write mutable files inside `/Applications`;
-- downloads the private Python 3.12 runtime and model files only when needed;
-- uses LaMa by default on Apple Silicon;
-- retains the E2FGVI-HQ source for supported CUDA installations, while clearly
-  treating MMCV/CUDA as optional on macOS.
+## What changed in 1.1.1
 
-Use the tool only with media you own or are authorized to modify.
+The earlier unrestricted detector could mistake white captions for watermarks. This app instead scans for the watermark names you specify, checks readable branding with Apple Vision OCR, and by default confirms the branding with a local vision model. It builds a timeline of separate appearances, rather than erasing a fixed box throughout the film.
 
-## Install the Mac app
+- **Automatic scanning:** enter names such as `InVideo, Storyblocks, iStock`. Remove Watermarks scans automatically when no checked regions exist. Copied descriptions such as `:fish: InVideo/muse, S Storyblocks, iStock by Getty Images` are normalized to their brand names.
+- **Actual video playback:** play, pause, scrub, step frames, jump between appearances, or play one selected interval.
+- **Editable timed boxes:** start and stop at the playhead, adjust a detected box, or draw a missed watermark. Numeric calibration is optional. A newly drawn box initially covers two seconds, not the whole video.
+- **Caption protection:** white text alone is insufficient. Automatic regions require matching named text, bounded boxes, and checked start/stop frames. Visual tracking uses references from confirmed branding; it does not treat arbitrary text as a new watermark.
+- **Repeating marks:** one-second sampling discovers intermittent branding and reports its measured cadence. Boundary refinement checks included and neighboring excluded frames.
+- **Local model fallback:** if an optional local vision server is unavailable, scanning uses the selected downloaded MLX model directly. Changing model settings preserves the checked timeline until an explicit rescan.
+- **Reliable completion:** the app decodes the entire output, including audio, before marking the job complete. Failed or interrupted jobs are kept separate from finished videos.
 
-1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v1.0.5.zip` from the GitHub
-   release.
-2. Unzip it and drag **MAC WATERMARK CLEANER.app** to Applications.
-3. Open the app. First setup needs internet access and may take several minutes.
-4. Choose videos from the app toolbar, then select **Remove Watermarks**.
+The test film was 607.9 seconds long. The scan found 59 timed regions, including 43 repeating corner InVideo appearances with a measured median interval of 14.033 seconds. A subsequent full-length render completed and its entire video and audio decoded successfully. A separate short proof was visually checked for removal and preservation of two unrelated captions. These are specific test results, not a guarantee of perfect removal from every film.
 
-The release uses an ad-hoc signature because it is not Apple-notarized. If
-macOS blocks the first launch, use right-click → **Open**. Since Sentinel is
-already part of the intended Mac setup, Sentinel can also be used as the
-Gatekeeper fallback for this trusted GitHub download. Sentinel is not bundled
-with this project.
+## Install and use
 
-Large detector and LaMa files download on the first processing run. They remain
-in Application Support so later runs can work offline.
+Requires macOS 14 or later and Apple Silicon. The Quick vision profile is smaller; the Latest quality profile requires substantially more memory and is intended for Macs with at least 32 GB.
 
-The app treats a valid native Foundation receipt as the Trash commit point. If
-macOS ever returns an unconfirmed or location-unknown result, the job is not
-reported as complete; inspect both the original path and Trash before retrying.
+1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v1.1.1.zip` from the [latest release](https://github.com/Hax0rgurl/WatermarkCleanerMac/releases/latest), unzip it, and move **MAC WATERMARK CLEANER.app** into Applications.
+2. Open the app and use **Choose Videos**. Initial runtime and model setup requires internet access.
+3. Enter the watermark names, then use **Find & Check Watermarks** or **Remove Watermarks** to scan automatically.
+4. Review the detected intervals with the scrubber and appearance navigation. Add or adjust any missed boxes at the playhead.
+5. Remove the marks. Finished files are saved under `~/Movies/MAC WATERMARK CLEANER`.
+
+The app has an ad-hoc signature and is not Apple-notarized. If Gatekeeper blocks it, use the macOS approval flow for opening a trusted downloaded application.
+
+## Local vision models
+
+The separate vision runtime reuses complete compatible model caches in the app, Hugging Face, or Pinokio. Missing weights are downloaded from pinned revisions:
+
+| Profile | Model | Approximate first download |
+|---|---|---|
+| Quick | [Qwen3.5-4B, 4-bit](https://huggingface.co/mlx-community/Qwen3.5-4B-4bit) | 3 GB |
+| Latest quality | [Qwen3.8-27B, 4-bit](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit) | 16 GB |
+
+The model catalog changes with tested app releases; the app does not automatically execute whichever model happens to be newest online. Apple Vision OCR also supports scanning without the optional vision model. An already-running OpenAI-compatible vision server on this Mac can be selected using its loopback URL and model name. External vision servers and redirects are rejected; video frames stay local.
+
+## Limits and file handling
+
+Automatic scanning requires readable matching branding. It can miss unreadable symbols, brief appearances between samples, heavily obscured marks, or marks that move substantially. Manual timed regions remain available. LaMa reconstructs the selected pixels; the result depends on scene detail and mask size. Review the finished film before treating it as restored.
+
+The native picker pins source-file identity. After complete output verification and identity rechecks, the original is moved to recoverable macOS Trash. Source-level CLI and Streamlit use leave originals in place. An uncertain Trash receipt is not reported as completion. Runtime data, models, caches, and logs live under `~/Library/Application Support/MAC WATERMARK CLEANER`, outside the signed app. Older app data paths and the historical bundle identifier remain compatible.
+
+Use the tool with media you own or are authorized to modify.
 
 ## Build and verify
 
@@ -68,8 +64,8 @@ runtime is managed CPython 3.12.13.
 Build outputs:
 
 - `dist/MAC WATERMARK CLEANER.app`
-- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.0.5.zip`
-- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.0.5.zip.sha256`
+- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.1.1.zip`
+- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.1.1.zip.sha256`
 
 To run the dedicated Mac/DeMark tests after the private runtime is provisioned:
 

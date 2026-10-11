@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="MAC WATERMARK CLEANER"
-VERSION="1.0.5"
+VERSION="1.1.1"
 IDENTIFIER="com.hax0rgurl.SoraWatermarkCleaner"
 BUILD_DIR="$ROOT_DIR/.build/macos"
 DIST_DIR="$ROOT_DIR/dist"
@@ -36,6 +36,11 @@ export COPYFILE_DISABLE=1
 rm -rf "$BUILD_DIR" "$FINAL_APP_BUNDLE" "$ZIP_PATH" "$CHECKSUM_PATH"
 mkdir -p "$BUILD_DIR" "$MACOS_DIR" "$ENGINE_DIR" "$RESOURCES_DIR/tools" "$DIST_DIR"
 mkdir -p "$BUILD_DIR/ModuleCache"
+mkdir -p "$STAGING_ROOT/native"
+# Compile stable local copies. File Provider can change hydrated source-file
+# metadata while Swift is reading an iCloud-backed workspace.
+cp "$ROOT_DIR/macos/Launcher.swift" "$ROOT_DIR/macos/TrashHelper.swift" \
+  "$ROOT_DIR/macos/VisionOCR.swift" "$STAGING_ROOT/native/"
 
 echo "Compiling native launcher…"
 swift_args=(
@@ -47,7 +52,7 @@ swift_args=(
   -framework UniformTypeIdentifiers
   -framework WebKit
   -o "$MACOS_DIR/$APP_NAME"
-  "$ROOT_DIR/macos/Launcher.swift"
+  "$STAGING_ROOT/native/Launcher.swift"
 )
 if [[ -n "$SWIFTC" ]]; then
   "$SWIFTC" "${swift_args[@]}"
@@ -62,13 +67,30 @@ trash_helper_args=(
   -module-cache-path "$BUILD_DIR/ModuleCache"
   -framework Foundation
   -o "$RESOURCES_DIR/tools/trash-item"
-  "$ROOT_DIR/macos/TrashHelper.swift"
+  "$STAGING_ROOT/native/TrashHelper.swift"
 )
 if [[ -n "$SWIFTC" ]]; then
   "$SWIFTC" "${trash_helper_args[@]}"
 else
   /usr/bin/xcrun swiftc "${trash_helper_args[@]}"
 fi
+
+echo "Compiling local watermark text checker…"
+ocr_helper_args=(
+  -O
+  -target arm64-apple-macos14.0
+  -module-cache-path "$BUILD_DIR/ModuleCache"
+  -framework Foundation
+  -framework Vision
+  -o "$RESOURCES_DIR/tools/vision-ocr"
+  "$STAGING_ROOT/native/VisionOCR.swift"
+)
+if [[ -n "$SWIFTC" ]]; then
+  "$SWIFTC" "${ocr_helper_args[@]}"
+else
+  /usr/bin/xcrun swiftc "${ocr_helper_args[@]}"
+fi
+cp "$RESOURCES_DIR/tools/vision-ocr" "$BUILD_DIR/vision-ocr"
 
 echo "Staging immutable engine source…"
 rsync -a \
@@ -116,7 +138,7 @@ payload = {
     "CFBundleName": app_name,
     "CFBundlePackageType": "APPL",
     "CFBundleShortVersionString": version,
-    "CFBundleVersion": "105",
+    "CFBundleVersion": "111",
     "LSMinimumSystemVersion": "14.0",
     "NSHighResolutionCapable": True,
     "NSPrincipalClass": "NSApplication",
@@ -131,6 +153,7 @@ if [[ -x "$RESOURCES_DIR/tools/uv" ]]; then
   /usr/bin/codesign --force --sign - "$RESOURCES_DIR/tools/uv"
 fi
 /usr/bin/codesign --force --sign - "$RESOURCES_DIR/tools/trash-item"
+/usr/bin/codesign --force --sign - "$RESOURCES_DIR/tools/vision-ocr"
 /usr/bin/codesign --force --sign - "$MACOS_DIR/$APP_NAME"
 /usr/bin/codesign --force --deep --sign - "$APP_BUNDLE"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"

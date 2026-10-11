@@ -256,3 +256,11 @@ profile/*.trace.json.gz.part.2
 profile/*.trace.json.gz.part.3
 profile/*.trace.json.gz.part.4
 profile/*.trace.json.gz.part.5
+
+# Local macOS state and media
+.DS_Store
+*.app/
+*.mp4
+*.mov
+*.mkv
+*.safetensors

@@ -36,6 +36,7 @@ from demark_world.completion import (
 from demark_world.configs import LOGS_PATH, OUTPUT_DIR, RUNTIME_ROOT
 from demark_world.core import DeMarkWorld
 from demark_world.schemas import CleanerType
+from demark_world.region_selector import select_watermark_regions, regions_for_processing
 
 VIDEO_TYPES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
@@ -63,6 +64,7 @@ def _load_engine() -> DeMarkWorld:
         cleaner_type=CleanerType.LAMA,
         detect_batch_size=4,
         enable_torch_compile=False,
+        automatic_detection=False,
     )
 
 
@@ -118,6 +120,7 @@ def _process_source(
     total: int,
     *,
     final_path: Path | None = None,
+    watermark_regions: list | None = None,
 ) -> tuple[Path, CompletionResult]:
     """Clean one pinned source and commit only after full validation."""
 
@@ -133,7 +136,7 @@ def _process_source(
         progress.progress(max(0, min(overall, 100)))
         if percent < 50:
             status.info(
-                f"File {file_index + 1}/{total}: detecting watermark regions…"
+                f"File {file_index + 1}/{total}: processing selected watermark areas…"
             )
         elif percent < 95:
             status.info(
@@ -159,6 +162,7 @@ def _process_source(
                 output_path,
                 progress_callback=update,
                 quiet=True,
+                watermark_regions=watermark_regions,
                 working_directory=workspace,
                 before_publish=lambda partial, visible: prepare_job_publication(
                     workspace,
@@ -362,6 +366,19 @@ def _inject_vaporwave_style() -> None:
             border-radius: 0;
           }
 
+          [data-testid="stExpander"] details,
+          [data-testid="stExpander"] summary,
+          [data-testid="stCode"] pre {
+            background: var(--panel-solid);
+            color: var(--text);
+          }
+
+          [data-testid="stSlider"] label,
+          [data-testid="stAlert"] p,
+          [data-testid="stExpander"] summary p {
+            color: var(--text);
+          }
+
           hr {
             border-color: rgba(0, 245, 255, .2) !important;
           }
@@ -399,8 +416,8 @@ def main() -> None:
         <section class="vw-hero">
           <div class="vw-kicker">PRIVATE VIDEO RESTORATION // macOS</div>
           <h1>MAC WATERMARK CLEANER</h1>
-          <p>Universal DeMark-World detection for Sora, Veo, Runway, Pika,
-          Kling, and other AI-video watermarks—inside one private Mac app.</p>
+          <p>Automatically find and time the named watermark, then remove it.
+          Play or scrub the video to check a range or correct a miss. Processing stays on your Mac.</p>
         </section>
         """,
         unsafe_allow_html=True,
@@ -408,14 +425,9 @@ def main() -> None:
 
     with st.sidebar:
         st.header("PROCESSING")
-        batch_size = st.slider(
-            "Detection batch size",
-            min_value=1,
-            max_value=8,
-            value=4,
-            help="Lower this if memory pressure is high.",
-        )
-        st.success("● LaMa engine ready")
+        st.caption("A local vision model confirms the branding. The scan finds "
+                   "each appearance and checks its start/stop frames before cleaning.")
+        st.caption("LaMa restoration loads when processing starts.")
         if platform.system() == "Darwin":
             st.caption(
                 "E2FGVI-HQ source is included for CUDA systems. This Mac build "
@@ -429,10 +441,8 @@ def main() -> None:
         st.caption("CLEANUP RECEIPTS")
         st.code(str(LOGS_PATH / "cleanup-audit.jsonl"), language=None)
 
-    st.info(
-        "The first run downloads the universal detector and LaMa model. "
-        "They remain in Application Support for later offline use."
-    )
+    st.info("Choose the watermark name and press REMOVE WATERMARKS to find, check and clean its appearances automatically. "
+            "FIND & CHECK WATERMARK TIMES lets you preview the ranges first.")
     if _RECOVERED_STALE_JOBS:
         st.warning(
             f"Recovered {_RECOVERED_STALE_JOBS} interrupted job workspace(s) "
@@ -466,40 +476,67 @@ def main() -> None:
         )
     else:
         st.write(f"{len(sources)} video(s) ready:")
+        selections: dict[str, list] = {}
         for identity in sources:
             size = identity.size / 1_048_576
             st.code(
                 f"{identity.source_path}  ·  {size:.1f} MB",
                 language=None,
             )
+            with st.expander(f"Video & watermark timeline: {identity.source_path.name}", expanded=True):
+                selections[str(identity.source_path)] = select_watermark_regions(identity)
+
+        missing_selection = any(
+            not selections.get(str(identity.source_path)) for identity in sources
+        )
+        if missing_selection:
+            st.caption("Removal will run the automatic scan for videos without checked ranges.")
 
         if st.button(
             "REMOVE WATERMARKS",
             type="primary",
             use_container_width=True,
+            disabled=False,
         ):
             results: list[tuple[Path, CompletionResult]] = []
             failures: list[tuple[Path, str]] = []
+            ready_sources = []
+            for identity in sources:
+                scan_progress = st.progress(0, text=f"Checking watermark times: {identity.source_path.name}")
+                try:
+                    selections[str(identity.source_path)] = regions_for_processing(
+                        identity, progress=lambda value, text:
+                        scan_progress.progress(float(value), text=text))
+                except Exception as exc:
+                    failures.append((identity.source_path, str(exc)))
+                    st.error(f"{identity.source_path.name}: {exc}")
+                    logger.exception("Automatic watermark scan failed for {}", identity.source_path)
+                else:
+                    ready_sources.append(identity)
+                finally:
+                    scan_progress.empty()
+            engine = None
             try:
-                with st.spinner(
-                    "Loading detector and LaMa model. First use can take several minutes…"
-                ):
-                    engine = _load_engine()
-                    engine.detect_batch_size = batch_size
+                if ready_sources:
+                    with st.spinner(
+                        "Loading the restoration model. First use can take several minutes…"
+                    ):
+                        engine = _load_engine()
             except Exception as exc:
                 st.error(f"Could not load the cleaner: {exc}")
                 logger.exception("Cleaner engine failed to load")
                 engine = None
 
             if engine is not None:
-                for index, identity in enumerate(sources):
+                for index, identity in enumerate(ready_sources):
                     source = identity.source_path
                     try:
                         completed_job = _process_source(
                             identity,
                             engine,
                             index,
-                            len(sources),
+                            len(ready_sources),
+                            watermark_regions=selections[str(source)],
                         )
                     except SourceIdentityError as exc:
                         failures.append((source, str(exc)))
@@ -571,6 +608,7 @@ def main() -> None:
     ]
     if completed:
         st.subheader("COMPLETED")
+        st.info("Your cleaned files are already saved. Use OUTPUT in the app toolbar to open their folder, or DOWNLOAD to save another copy.")
         for item in completed:
             path = Path(item["output"])
             left, right = st.columns([3, 1])
@@ -585,6 +623,7 @@ def main() -> None:
                 mime="video/mp4",
                 key=f"download-{path}",
                 use_container_width=True,
+                on_click="ignore",
             )
 
     st.divider()

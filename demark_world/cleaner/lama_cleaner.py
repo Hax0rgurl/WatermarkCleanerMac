@@ -29,6 +29,9 @@ LAMA_MODEL_URL = (
 )
 LAMA_MODEL_MD5 = "e3aa4aaa15225a33ec84f9f4bc47e500"
 LAMA_MODEL_PATH = MODELS_DIR / "big-lama.pt"
+INPAINT_CONTEXT = 128
+MIN_INPAINT_SIZE = 256
+MAX_INPAINT_SIZE = 768
 
 
 def _md5(path: Path) -> str:
@@ -108,9 +111,40 @@ class LamaCleaner:
     def clean(
         self, input_image: np.ndarray, watermark_mask: np.ndarray
     ) -> np.ndarray:
-        original_height, original_width = input_image.shape[:2]
-        image = _pad_to_modulo(input_image)
-        mask = _pad_to_modulo(watermark_mask)
+        if watermark_mask.shape != input_image.shape[:2]:
+            raise ValueError("Watermark mask must match the video frame dimensions")
+        ys, xs = np.nonzero(watermark_mask)
+        if not len(xs):
+            return input_image.copy()
+
+        # Give LaMa context around the watermark without running its Fourier
+        # network over an entire HD/4K frame. Keep the original output size.
+        height, width = input_image.shape[:2]
+
+        def crop_bounds(low: int, high: int, limit: int) -> tuple[int, int]:
+            size = min(limit, max(MIN_INPAINT_SIZE, high - low + 2 * INPAINT_CONTEXT))
+            start = max(0, min((low + high - size) // 2, limit - size))
+            return start, start + size
+
+        left, right = crop_bounds(int(xs.min()), int(xs.max()) + 1, width)
+        top, bottom = crop_bounds(int(ys.min()), int(ys.max()) + 1, height)
+        crop = input_image[top:bottom, left:right]
+        crop_mask = watermark_mask[top:bottom, left:right]
+        crop_height, crop_width = crop.shape[:2]
+
+        # The pretrained model expects RGB; OpenCV and the encoder use BGR.
+        image = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        mask = crop_mask
+        if max(crop_height, crop_width) > MAX_INPAINT_SIZE:
+            scale = MAX_INPAINT_SIZE / max(crop_height, crop_width)
+            size = (max(1, round(crop_width * scale)), max(1, round(crop_height * scale)))
+            image = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
+            # Preserve small masked details when reducing the context crop.
+            mask = cv2.resize(mask, size, interpolation=cv2.INTER_AREA)
+            mask = np.where(mask > 0, 255, 0).astype(np.uint8)
+        resized_height, resized_width = image.shape[:2]
+        image = _pad_to_modulo(image)
+        mask = _pad_to_modulo(mask)
 
         image_tensor = torch.from_numpy(_normalize(image)).unsqueeze(0).to(
             self.device
@@ -123,5 +157,13 @@ class LamaCleaner:
         output = self.model(image_tensor, mask_tensor)
         output = output[0].permute(1, 2, 0).detach().cpu().numpy()
         output = np.clip(output * 255, 0, 255).astype("uint8")
-        # The input and FFmpeg stream are both BGR, so preserve channel order.
-        return output[:original_height, :original_width]
+        output = output[:resized_height, :resized_width]
+        output = cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
+        if output.shape[:2] != (crop_height, crop_width):
+            output = cv2.resize(output, (crop_width, crop_height), interpolation=cv2.INTER_CUBIC)
+        # Model predictions must never repaint pixels outside the selected mask.
+        result = input_image.copy()
+        result_crop = result[top:bottom, left:right]
+        selected = crop_mask > 0
+        result_crop[selected] = output[selected]
+        return result

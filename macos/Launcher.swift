@@ -132,6 +132,7 @@ private func runSelfTest() -> Never {
         resources.appendingPathComponent("engine/demark_world/completion.py"),
         resources.appendingPathComponent("engine/requirements-macos.lock"),
         resources.appendingPathComponent("tools/trash-item"),
+        resources.appendingPathComponent("tools/vision-ocr"),
         resources.appendingPathComponent("THIRD_PARTY_NOTICES.md"),
     ]
     for path in required where !FileManager.default.fileExists(atPath: path.path) {
@@ -146,7 +147,7 @@ if CommandLine.arguments.contains("--self-test") {
     runSelfTest()
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKDownloadDelegate {
     private enum ContentMode {
         case loading
         case cleaner
@@ -168,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var contentMode = ContentMode.loading
     private var isTerminating = false
     private var selectionTimer: Timer?
+    private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
     private lazy var runtimeRootURL: URL = {
         FileManager.default.homeDirectoryForCurrentUser
@@ -816,12 +818,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let isLocal =
             destination.host == uiURL.host
             && destination.port == uiURL.port
+        if navigationAction.shouldPerformDownload && (isLocal || destination.scheme == "blob") {
+            decisionHandler(.download)
+            return
+        }
         if navigationAction.navigationType == .linkActivated && !isLocal {
             NSWorkspace.shared.open(destination)
             decisionHandler(.cancel)
         } else {
             decisionHandler(.allow)
         }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
+        let response = navigationResponse.response as? HTTPURLResponse
+        let attachment = response?.value(forHTTPHeaderField: "Content-Disposition")?
+            .lowercased().contains("attachment") == true
+        decisionHandler(attachment || !navigationResponse.canShowMIMEType ? .download : .allow)
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    func download(
+        _ download: WKDownload,
+        decideDestinationUsing response: URLResponse,
+        suggestedFilename: String,
+        completionHandler: @escaping (URL?) -> Void
+    ) {
+        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
+        let filename = URL(fileURLWithPath: suggestedFilename).lastPathComponent
+        let original = directory.appendingPathComponent(filename.isEmpty ? "cleaned-video.mp4" : filename)
+        var destination = original
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: destination.path) {
+            destination = directory.appendingPathComponent(
+                "\(original.deletingPathExtension().lastPathComponent) (\(suffix)).\(original.pathExtension)"
+            )
+            suffix += 1
+        }
+        downloadDestinations[ObjectIdentifier(download)] = destination
+        completionHandler(destination)
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        guard let destination = downloadDestinations.removeValue(forKey: ObjectIdentifier(download)) else { return }
+        appendLog("Saved download: \(destination.path)\n")
+        NSWorkspace.shared.activateFileViewerSelecting([destination])
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        downloadDestinations.removeValue(forKey: ObjectIdentifier(download))
+        appendLog("Download failed: \(error.localizedDescription)\n")
+        let alert = NSAlert()
+        alert.messageText = "The download could not be saved."
+        alert.informativeText = "Your cleaned video is still in the OUTPUT folder. \(error.localizedDescription)"
+        alert.beginSheetModal(for: window)
     }
 }
 

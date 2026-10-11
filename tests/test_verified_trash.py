@@ -731,6 +731,8 @@ def test_swift_helper_revalidates_identity_and_emits_commit_receipt(
             "swiftc",
             "-target",
             "arm64-apple-macos14.0",
+            "-module-cache-path",
+            str(tmp_path / "ModuleCache"),
             "-framework",
             "Foundation",
             "-o",

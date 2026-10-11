@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT_NAME = "MAC WATERMARK CLEANER"
-VERSION = "1.0.5"
+VERSION = "1.1.1"
 
 
 def test_product_name_is_consistent_in_user_facing_source() -> None:

@@ -5,6 +5,7 @@ removes an ffprobe dependency from the self-contained macOS runtime; FFmpeg is
 still used by the core encoder to preserve output quality and audio.
 """
 
+import math
 from pathlib import Path
 from typing import Iterator, List, Optional
 
@@ -65,12 +66,22 @@ class VideoLoader:
         try:
             self.width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
             self.height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            self.fps = float(capture.get(cv2.CAP_PROP_FPS)) or 30.0
-            self.total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.fps = float(capture.get(cv2.CAP_PROP_FPS))
+            if not math.isfinite(self.fps) or self.fps <= 0:
+                raise ValueError("Input video has invalid frame rate")
+            self.total_frames = self._count_decoded_frames(capture)
             bitrate = int(capture.get(cv2.CAP_PROP_BITRATE))
             self.original_bitrate = str(bitrate * 1000) if bitrate > 0 else None
         finally:
             capture.release()
+
+    @staticmethod
+    def _count_decoded_frames(capture: cv2.VideoCapture) -> int:
+        """Count successful reads rather than trusting container metadata."""
+        count = 0
+        while capture.read()[0]:
+            count += 1
+        return count
 
     def __len__(self) -> int:
         return self.total_frames

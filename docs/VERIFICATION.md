@@ -1,4 +1,19 @@
-# Version 1.1.1 verification
+# Version 1.1.2 verification
+
+The 1.1.2 checks cover coordinate errors, inaccurate frame metadata, real MP4 encoding and full decoding, and finishing timeouts. The historical media and 1.1.1 release checks below describe the earlier release, not a fresh long-video render.
+
+## Executed 1.1.2 checks
+
+- 110 relevant Mac tests passed on CPython 3.12.13, including the native Trash helper, restoration, playback, timed regions, and 11 new review regressions.
+- The public Mac API encoded a real 20-frame MP4 and full-output verification decoded it successfully without altering its source.
+- Inaccurate frame metadata (zero, too small, too large, and NaN) did not affect exact decoded counts.
+- Mux and verifier timeout injections failed safely without publishing output or retiring the source.
+- Native build, strict deep signature checks, fresh ZIP extraction, launcher self-tests, and bootstrap diagnostics passed.
+- The upstream-layout companion repository passed its 28 timed-region tests.
+
+Exact counting adds an initial decode pass with bounded memory. Each mux/verification step allows one hour; inference is not given this deadline. No fresh ten-minute render or full visual grading is claimed for 1.1.2.
+
+## Historical 1.1.1 verification
 
 ## Success criteria
 

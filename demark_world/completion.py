@@ -19,6 +19,9 @@ from loguru import logger
 from demark_world.configs import LOGS_PATH, RUNTIME_ROOT, WORKING_DIR
 
 
+FFMPEG_POSTPROCESS_TIMEOUT_SECONDS = 3600
+
+
 class CompletionError(RuntimeError):
     """Base class for completion safety failures."""
 
@@ -195,6 +198,7 @@ def verify_cleaned_video(
             check=False,
             capture_output=True,
             text=True,
+            timeout=FFMPEG_POSTPROCESS_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise OutputVerificationError(

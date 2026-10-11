@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="MAC WATERMARK CLEANER"
-VERSION="1.1.1"
+VERSION="1.1.2"
 IDENTIFIER="com.hax0rgurl.SoraWatermarkCleaner"
 BUILD_DIR="$ROOT_DIR/.build/macos"
 DIST_DIR="$ROOT_DIR/dist"
@@ -138,7 +138,7 @@ payload = {
     "CFBundleName": app_name,
     "CFBundlePackageType": "APPL",
     "CFBundleShortVersionString": version,
-    "CFBundleVersion": "111",
+    "CFBundleVersion": "112",
     "LSMinimumSystemVersion": "14.0",
     "NSHighResolutionCapable": True,
     "NSPrincipalClass": "NSApplication",

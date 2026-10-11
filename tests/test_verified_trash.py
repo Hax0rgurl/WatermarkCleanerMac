@@ -282,7 +282,7 @@ def test_faststart_mp4_truncated_after_first_frame_fails_full_decode(
         )
 
 
-def test_full_decode_uses_xerror_without_fixed_timeout(tmp_path: Path) -> None:
+def test_full_decode_uses_xerror_with_bounded_timeout(tmp_path: Path) -> None:
     output = tmp_path / "output.mp4"
     output.write_bytes(b"fixture")
     captured = {}
@@ -305,7 +305,7 @@ def test_full_decode_uses_xerror_without_fixed_timeout(tmp_path: Path) -> None:
 
     assert "-xerror" in captured["command"]
     assert "-frames:v" not in captured["command"]
-    assert "timeout" not in captured["kwargs"]
+    assert captured["kwargs"]["timeout"] == 3600
 
 
 def test_output_replacement_during_full_decode_is_rejected(tmp_path: Path) -> None:

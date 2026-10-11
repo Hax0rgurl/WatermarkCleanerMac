@@ -1,6 +1,6 @@
 [project]
 name = "mac-watermark-cleaner"
-version = "1.1.1"
+version = "1.1.2"
 description = "Universal Mac watermark cleaner powered by DeMark-World"
 readme = "README.md"
 license = "Apache-2.0"
@@ -15,7 +15,7 @@ dependencies = [
     "pandas==3.0.5",
     "pydantic==2.13.4",
     "requests==2.34.2",
-    "ruptures==1.1.10",
+    "ruptures==1.1.20",
     "scikit-learn==1.9.0",
     "streamlit==1.60.0",
     "torch==2.13.0",

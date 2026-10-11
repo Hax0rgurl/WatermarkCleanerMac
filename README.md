@@ -2,9 +2,13 @@
 
 A native Apple Silicon app powered by [DeMark-World](https://github.com/linkedlist771/DeMark-World), with automatic named-watermark scanning and editable timed regions.
 
-[Download the latest Mac app](https://github.com/Hax0rgurl/WatermarkCleanerMac/releases/latest) · [Changes in 1.1.1](CHANGELOG.md) · [Verification and limitations](docs/VERIFICATION.md)
+[Download the latest Mac app](https://github.com/Hax0rgurl/WatermarkCleanerMac/releases/latest) · [Changes in 1.1.2](CHANGELOG.md) · [Verification and limitations](docs/VERIFICATION.md)
 
-## What changed in 1.1.1
+## What changed in 1.1.2
+
+The Mac pipeline now includes the applicable fixes from upstream PR #11: decoded frame counts for timed intervals, clear coordinate validation errors, and one-hour deadlines for audio muxing and full-output verification. Failed finishing steps cannot authorize source retirement. Exact counting adds a streaming decode pass before processing.
+
+## Features introduced in 1.1.1
 
 The earlier unrestricted detector could mistake white captions for watermarks. This app instead scans for the watermark names you specify, checks readable branding with Apple Vision OCR, and by default confirms the branding with a local vision model. It builds a timeline of separate appearances, rather than erasing a fixed box throughout the film.
 
@@ -22,7 +26,7 @@ The test film was 607.9 seconds long. The scan found 59 timed regions, including
 
 Requires macOS 14 or later and Apple Silicon. The Quick vision profile is smaller; the Latest quality profile requires substantially more memory and is intended for Macs with at least 32 GB.
 
-1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v1.1.1.zip` from the [latest release](https://github.com/Hax0rgurl/WatermarkCleanerMac/releases/latest), unzip it, and move **MAC WATERMARK CLEANER.app** into Applications.
+1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v1.1.2.zip` from the [latest release](https://github.com/Hax0rgurl/WatermarkCleanerMac/releases/latest), unzip it, and move **MAC WATERMARK CLEANER.app** into Applications.
 2. Open the app and use **Choose Videos**. Initial runtime and model setup requires internet access.
 3. Enter the watermark names, then use **Find & Check Watermarks** or **Remove Watermarks** to scan automatically.
 4. Review the detected intervals with the scrubber and appearance navigation. Add or adjust any missed boxes at the playhead.
@@ -68,8 +72,8 @@ runtime is managed CPython 3.12.13.
 Build outputs:
 
 - `dist/MAC WATERMARK CLEANER.app`
-- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.1.1.zip`
-- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.1.1.zip.sha256`
+- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.1.2.zip`
+- `dist/MAC-WATERMARK-CLEANER-macOS-arm64-v1.1.2.zip.sha256`
 
 To run the dedicated Mac/DeMark tests after the private runtime is provisioned:
 

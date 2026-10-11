@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.2
+
+- Ported the applicable reviewed fixes from upstream PR #11 into the Mac pipeline.
+- Validate timed intervals against successfully decoded frames and reject processing count changes.
+- Convert malformed coordinate errors to a clear ValueError while retaining numeric-string support.
+- Bound audio muxing and full-output verification to one hour each. Timeouts fail completion and preserve the source.
+- Added regression coverage and timed-region API documentation.
+
 ## 1.1.1
 
 - Added automatic named-brand scanning, OCR checks, model-confirmed visual tracking, and audited start/stop ranges.

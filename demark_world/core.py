@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import os
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
@@ -33,6 +34,8 @@ from demark_world.utils.video_utils import VideoLoader, merge_frames_with_overla
 from demark_world.watermark_cleaner import WaterMarkCleaner
 from demark_world.watermark_detector import DeMarkWorldDetector
 from demark_world.timed_regions import region_boxes, compile_regions, TimedRegion
+
+FFMPEG_POSTPROCESS_TIMEOUT_SECONDS = 3600
 
 VIDEO_EXTENSIONS = [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm"]
 
@@ -325,7 +328,7 @@ class DeMarkWorld:
             tqdm(loader, total=total_frames, desc="Detect watermarks", disable=quiet)
         ):
             if index >= total_frames:
-                break
+                raise ValueError("Input frame count changed during processing")
             batch_frames.append(frame)
             batch_indices.append(index)
             if len(batch_frames) >= self.detect_batch_size:
@@ -386,6 +389,7 @@ class DeMarkWorld:
         manual_boxes: list[tuple[int, int, int, int]] | None = None,
         timed_regions: list[TimedRegion] | None = None,
     ) -> None:
+        decoded_count = 0
         for index, frame in enumerate(
             tqdm(
                 VideoLoader(input_video_path),
@@ -413,8 +417,12 @@ class DeMarkWorld:
                 ] = 255
                 cleaned = self.cleaner.clean(cleaned, mask)
             process_out.stdin.write(cleaned.astype(np.uint8).tobytes())
+            decoded_count += 1
             if progress_callback:
                 progress_callback(50 + int((index / total_frames) * 45))
+
+        if decoded_count != total_frames:
+            raise ValueError(f"Decoded {decoded_count} frames; expected {total_frames}")
 
     def _clean_temporal(
         self,
@@ -497,18 +505,19 @@ class DeMarkWorld:
         try:
             video = ffmpeg.input(str(temp_output_path))
             audio = ffmpeg.input(str(input_video_path)).audio
-            (
+            command = (
                 ffmpeg.output(
-                    video,
-                    audio,
-                    str(merged_partial),
-                    vcodec="copy",
-                    acodec="aac",
+                    video, audio, str(merged_partial), vcodec="copy", acodec="aac",
                 )
                 .overwrite_output()
                 .global_args("-loglevel", "error")
-                .run(capture_stdout=True, capture_stderr=True)
+                .compile()
             )
+            completed = subprocess.run(
+                command, capture_output=True, timeout=FFMPEG_POSTPROCESS_TIMEOUT_SECONDS,
+            )
+            if completed.returncode:
+                raise ffmpeg.Error("ffmpeg", completed.stdout, completed.stderr)
             self._publish_no_clobber(
                 merged_partial,
                 output_video_path,

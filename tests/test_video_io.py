@@ -1,6 +1,7 @@
 """Run real encoding, decoding, timestamp, audio and format checks."""
 
 from fractions import Fraction
+from pathlib import Path
 import subprocess
 
 import av
@@ -145,8 +146,62 @@ def test_mux_timeout_is_bounded_and_not_reported_as_success(monkeypatch, tmp_pat
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
     monkeypatch.setattr(video.subprocess, "run", fail)
-    with pytest.raises(subprocess.TimeoutExpired):
+    with pytest.raises(
+        RuntimeError, match="Finishing the video timed out after 3600 seconds"
+    ) as failure:
         video.mux_audio(source, source, tmp_path / "output.mp4", video.probe_video(source))
+    assert isinstance(failure.value.__cause__, subprocess.TimeoutExpired)
+
+
+@pytest.mark.parametrize("stderr", [None, "diagnostic context\nInvalid source media packet"])
+def test_mux_error_reports_finishing_stage_status_and_captured_diagnostic(
+    monkeypatch, tmp_path, stderr
+):
+    source = create_video(tmp_path / "source.mp4")
+
+    def fail(command, **kwargs):
+        assert kwargs["check"] and kwargs["capture_output"] and kwargs["text"]
+        raise subprocess.CalledProcessError(7, command, stderr=stderr)
+
+    monkeypatch.setattr(video.subprocess, "run", fail)
+    with pytest.raises(
+        RuntimeError, match="Finishing the video failed \\(exit status 7\\)"
+    ) as failure:
+        video.mux_audio(source, source, tmp_path / "output.mp4", video.probe_video(source))
+    assert isinstance(failure.value.__cause__, subprocess.CalledProcessError)
+    if stderr:
+        assert stderr in str(failure.value)
+
+
+def test_mux_failure_keeps_source_and_never_publishes_partial_video(monkeypatch, tmp_path):
+    from watermark_cleaner.core import WatermarkCleaner
+
+    source = create_video(tmp_path / "source.mp4", pts=[0, 3000, 6000], audio=True)
+    original = source.read_bytes()
+
+    class IdentityEngine:
+        def restore(self, frames, masks, progress=None):
+            return frames.copy()
+
+    def fail(command, **kwargs):
+        assert "_mux_audio_packets" in command[2]
+        Path(command[-3]).write_bytes(b"incomplete mux output")
+        raise subprocess.CalledProcessError(1, command, stderr="Native media container failed")
+
+    monkeypatch.setattr(video.subprocess, "run", fail)
+    output = tmp_path / "cleaned.mp4"
+    progress = []
+    with pytest.raises(RuntimeError, match="Native media container failed"):
+        WatermarkCleaner(engine=IdentityEngine()).run(
+            source,
+            output,
+            progress_callback=progress.append,
+            watermark_regions=[{"bbox": [0.1, 0.1, 0.3, 0.3], "start_frame": 0, "end_frame": 3}],
+        )
+    assert 91 in progress and 100 not in progress
+    assert not output.exists()
+    assert not list(tmp_path.glob("temporal-*"))
+    assert source.read_bytes() == original
 
 
 def test_unrepresentable_shared_movie_clock_is_rejected(tmp_path):

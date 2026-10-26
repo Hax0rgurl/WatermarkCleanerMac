@@ -36,6 +36,8 @@ def test_cli_regions_and_engine_reach_shared_pipeline(tmp_path, monkeypatch, cap
                 str(region_file),
                 "--watermark-text",
                 "InVideo",
+                "--watermark-style",
+                "invideo",
             ]
         )
         == 0
@@ -45,6 +47,7 @@ def test_cli_regions_and_engine_reach_shared_pipeline(tmp_path, monkeypatch, cap
     assert args == (source, output)
     assert kwargs["watermark_regions"][0]["start_frame"] == 2
     assert kwargs["watermark_text"] == "InVideo"
+    assert kwargs["watermark_style"] == "invideo"
     assert source.read_bytes() == b"source identity"
     assert f"Completed: {output}" in capsys.readouterr().out
 

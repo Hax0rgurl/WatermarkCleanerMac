@@ -309,9 +309,18 @@ def mux_audio(source: Path, video: Path, output: Path, info: VideoInfo) -> None:
         str(clock),
         str(info.time_base.denominator),
     ]
-    subprocess.run(
-        command, env=environment, capture_output=True, text=True, timeout=3600, check=True
-    )
+    try:
+        subprocess.run(
+            command, env=environment, capture_output=True, text=True, timeout=3600, check=True
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Finishing the video timed out after 3600 seconds.") from error
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or error.stdout or "").strip()
+        message = f"Finishing the video failed (exit status {error.returncode})."
+        if detail:
+            message += "\n" + detail[-4000:]
+        raise RuntimeError(message) from error
 
 
 @lru_cache(maxsize=12)

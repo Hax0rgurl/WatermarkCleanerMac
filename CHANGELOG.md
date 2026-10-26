@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.0
+
+- Add Auto, TikTok, Instagram, CapCut, and InVideo style selection. Bundle TikTok-note and Instagram-camera/Reels silhouettes; CapCut and InVideo retain named-OCR glyph profiles with adjoining text and local logo-detail checks.
+- Check independently recognized watermark components on every decoded frame. Preserve visible fades and exact position changes without filling genuinely absent intervals.
+- Match alternative TikTok icon arrangements so an OCR box that starts at the wordmark does not leave the music note outside the mask.
+- Refresh automatic selections from older scanner versions while preserving manually corrected and removed ranges. Newly added manual areas stay additive. Save selections separately by source identity, style, and target name.
+- Reject visual-player responses from a previous source or watermark selection, and revalidate the selected source after a refreshed scan before restoring frames.
+
 ## 2.0.1
 
 - Cover the complete adjacent TikTok icon, including its colored edges and lower loop, in fresh and previously cached automatic selections.

@@ -1,6 +1,6 @@
-# MAC WATERMARK CLEANER 2.0.1
+# MAC WATERMARK CLEANER 2.1.0
 
-Version 2.0.1 covers the complete TikTok icon in fresh and cached automatic selections, fixes nonzero starting timestamps and final-frame duration during audio/video muxing, and prevents superseded commits from publishing releases.
+Version 2.1.0 fixes gaps at watermark transitions and incomplete TikTok logo masks. It adds optional platform styles, local Instagram camera/Reels matching beside creator text, and automatic refresh of old scan results while retaining manual corrections.
 
 Version 2 replaces the former DeMark/LaMa restoration pipeline with two local video models: E2FGVI-HQ, selected by default, and ProPainter.
 

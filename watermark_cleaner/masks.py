@@ -6,6 +6,7 @@ import numpy as np
 from scipy import ndimage
 
 from .timed_regions import region_boxes
+from .templates import match_icon
 
 
 def _disk(radius: int):
@@ -55,20 +56,32 @@ def build_masks(frames: list[np.ndarray], start: int, regions: list[dict]) -> np
             for index in active:
                 result[index, y1:y2, x1:x2] = 255
             continue
-        full_icon = None
+        full_icons = []
+        samples = active[:: max(1, len(active) // 12)][:12]
         if (
-            str(region.get("label", "")).casefold() == "tiktok"
+            str(region.get("label", "")).casefold() in {"tiktok", "instagram"}
             and region.get("verification") == "named-ocr-v1"
         ):
             anchor = region_boxes([region.get("anchor_bbox", parts[0])], width, height)[0]
-            full_icon = tiktok_icon_box(anchor, width, height)
-            # Existing saved selections may contain the previous search bounds.
-            # Derive the complete note from the verified anchor and expand this
-            # local patch, without changing the user's stored manual rectangles.
-            x1, y1 = min(x1, full_icon[0]), min(y1, full_icon[1])
-            x2, y2 = max(x2, full_icon[2]), max(y2, full_icon[3])
+            label = str(region["label"]).casefold()
+            for index in samples[::3]:
+                found = match_icon(frames[index], anchor, label)
+                if found:
+                    full_icons.append(found["bbox"])
+            if not full_icons:
+                if label == "tiktok":
+                    full_icons.append(tiktok_icon_box(anchor, width, height))
+                elif region.get("icon_search") in parts:
+                    # The scanner includes a template-confirmed icon as a
+                    # component. Its generic search window is never a mask.
+                    full_icons.extend(region_boxes([region["icon_search"]], width, height))
+            # OCR can start either before or after the note/camera. Match its
+            # whole silhouette across several backgrounds, then include the
+            # colored fringe. Saved manual rectangles never use this expansion.
+            for icon in full_icons:
+                x1, y1 = min(x1, icon[0]), min(y1, icon[1])
+                x2, y2 = max(x2, icon[2]), max(y2, icon[3])
         # At most twelve tiny context patches are stacked, even for long videos.
-        samples = active[:: max(1, len(active) // 12)][:12]
         patches = np.stack([frames[i][y1:y2, x1:x2] for i in samples])
         low = np.percentile(patches, 10, axis=0).astype(np.float32)
         high = np.percentile(patches, 90, axis=0).astype(np.float32)
@@ -87,7 +100,7 @@ def build_masks(frames: list[np.ndarray], start: int, regions: list[dict]) -> np
         if np.count_nonzero(core) < max(8, np.count_nonzero(allowed) * 0.015):
             core = allowed.copy()
         icon_box = region.get("icon_search")
-        if icon_box and full_icon is None:
+        if icon_box and not full_icons:
             icon = _part_mask([icon_box], width, height)[y1:y2, x1:x2]
             candidates = (white | colored) & icon
             labels, count = ndimage.label(ndimage.binary_closing(candidates, iterations=1))
@@ -106,8 +119,7 @@ def build_masks(frames: list[np.ndarray], start: int, regions: list[dict]) -> np
         radius = max(3, min(7, round(min((p[3] - p[1]) * height for p in parts) * 0.24)))
         glyphs = ndimage.binary_fill_holes(core)
         glyphs = ndimage.binary_dilation(glyphs, structure=_disk(radius))
-        if full_icon is not None:
-            left, top, right, bottom = full_icon
+        for left, top, right, bottom in full_icons:
             glyphs[top - y1 : bottom - y1, left - x1 : right - x1] = True
         for index in active:
             result[index, y1:y2, x1:x2][glyphs] = 255

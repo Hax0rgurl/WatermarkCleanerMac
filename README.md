@@ -8,7 +8,7 @@ A local Apple Silicon video watermark cleaner with two restoration engines: **E2
 
 Requires **Apple Silicon and macOS 14 or later**.
 
-1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.1.zip`, unzip it, and move **MAC WATERMARK CLEANER.app** into Applications.
+1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v2.1.0.zip`, unzip it, and move **MAC WATERMARK CLEANER.app** into Applications.
 2. Open the app. The first launch automatically installs its private Python runtime and downloads **both** restoration model sets. Keep the internet connection available until setup finishes. The window shows setup and model-download progress.
 3. Choose videos, select E2FGVI-HQ or ProPainter, and press **REMOVE WATERMARKS**.
 4. Open the completed copy from the app or `~/Movies/MAC WATERMARK CLEANER`. Your original stays in place.
@@ -19,13 +19,22 @@ The app is ad-hoc signed and is not Apple-notarized. If macOS blocks the downloa
 
 ## Automatic detection and optional corrections
 
-The default scan looks for a fixed list of common platform names. You can narrow it to specific branding in the optional watermark-name field, for example `InVideo, Storyblocks`.
+The default **Auto** scan looks for common platform branding. In **Watermark options**, choose **TikTok**, **Instagram**, **CapCut**, or **InVideo** to narrow detection to that download style. TikTok and Instagram have bundled logo silhouettes. CapCut and InVideo use their recognized wordmarks and adjoining text, with local pixel checks for nearby logo detail. The optional watermark-name field can target specific branding or a creator name, for example `InVideo, Storyblocks`.
 
-Apple Vision reads text locally. Matching names seed a watermark track, then local pixel comparisons check its appearances and start/stop frames. The app does not use an unrestricted language-model detector or classify every white word as a watermark. Masks follow detected lettering and persistent logo pixels within the checked areas.
+Apple Vision reads text locally. Matching names identify branding and its creator text; TikTok-note and Instagram-camera/Reels templates help locate their adjoining symbols. Recognized components are checked on every decoded frame, including fades and position changes. Masks cover identified lettering and checked adjoining logo detail rather than relying on a single fixed rectangle. Selecting a style does not authorize masking unrelated captions.
+
+Previously saved automatic ranges are refreshed when the scanner changes. Manual corrections are retained, and selections for different styles or names are stored separately.
 
 **Review or adjust watermark times** opens the source player. Play, pause, scrub, step frames, and set start or stop at the playhead. Draw a missed area or adjust an existing interval there. Numerical controls are optional calibration tools.
 
-Readable named branding is required to seed automatic detection. Small, distorted, obscured, purely symbolic, or very brief marks can be missed. A brand appearing in unrelated on-screen text can still need correction. Review the result, especially detailed moving backgrounds and large marks. Neither model can guarantee a clean reconstruction of hidden scene detail.
+Automatic detection needs readable target text or a supported platform logo beside creator text. Small, distorted, obscured, very brief, or unfamiliar marks can be missed. A brand appearing in unrelated on-screen text can still need correction. Review the result, especially detailed moving backgrounds and large marks. Neither model can guarantee a clean reconstruction of hidden scene detail.
+
+## Version 2.1 changes
+
+- Add TikTok-note and Instagram-camera/Reels templates, plus optional style selection for TikTok, Instagram, CapCut, and InVideo.
+- Check separate watermark components across decoded frames so background changes do not leave untreated gaps in an otherwise visible watermark.
+- Refresh older automatic selections while retaining manual timing and area corrections.
+- Keep style and name selections separate and reject visual edits returned for a previous selection.
 
 ## What changed in version 2
 
@@ -63,8 +72,8 @@ The first command builds the app and validates its native executable, resources,
 
 ```text
 dist/MAC WATERMARK CLEANER.app
-dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.1.zip
-dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.1.zip.sha256
+dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.1.0.zip
+dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.1.0.zip.sha256
 ```
 
 For source development and the full test suite:

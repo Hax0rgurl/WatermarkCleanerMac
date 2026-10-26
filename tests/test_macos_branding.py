@@ -7,7 +7,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT_NAME = "MAC WATERMARK CLEANER"
-VERSION = "2.0.1"
+VERSION = "2.1.0"
 
 
 def test_package_metadata_matches_app_release_version() -> None:
@@ -15,7 +15,7 @@ def test_package_metadata_matches_app_release_version() -> None:
 
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert metadata["project"]["version"] == VERSION == __version__
-    assert '"CFBundleVersion": "201"' in (ROOT / "script/build_macos_app.sh").read_text()
+    assert '"CFBundleVersion": "210"' in (ROOT / "script/build_macos_app.sh").read_text()
 
 
 def test_product_name_is_consistent_in_user_facing_source() -> None:

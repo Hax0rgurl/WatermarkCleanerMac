@@ -22,9 +22,16 @@ Useful individual checks:
 .venv/bin/python -m pytest tests/test_model_store.py tests/test_cli.py
 .venv/bin/python -m pytest tests/test_macos_upgrade.py tests/test_macos_single_window.py tests/test_macos_branding.py
 .venv/bin/python -m pytest tests/test_app_workflow.py
+.venv/bin/python -m pytest tests/test_scanner.py
 ```
 
 The remaining tests cover source identity, timing validation, scanner scope, masks, streaming playback, processing failures, output verification, and native packaging. Some pipeline tests inject a small restoration function to exercise failure paths without model inference; the separate real-checkpoint tests keep backend inference covered.
+
+Scanner tests include moving backgrounds, visible fades, genuine absent intervals, changes in watermark position, alternative platform-logo layouts, and unrelated white captions. UI tests check style propagation, separate saved selections by style and target, refresh of obsolete automatic ranges, preserved manual corrections, and rejection of responses from a previous visual selection. A failed refresh or a changed source cannot produce a completed download.
+
+Platform-logo tests use synthetic overlays to control exactly which pixels and frames contain a watermark. A downloaded Instagram reel without a burned-in platform mark is a negative example, not proof that an Instagram export watermark was removed. Synthetic tests and successful decoding do not replace visual inspection of real restored footage.
+
+Run the native OCR and recoverable-Trash tests with normal macOS API access. A restricted execution sandbox can block Apple Vision or Foundation even when the same tests pass outside that sandbox. Keep those tests enabled.
 
 To exercise actual first-launch setup in a separate runtime without opening a window:
 

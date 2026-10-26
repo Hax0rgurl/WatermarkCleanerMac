@@ -57,10 +57,14 @@ def test_finishing_timeout_keeps_source_and_does_not_publish(tmp_path, monkeypat
         return actual_run(command, **kwargs)
 
     monkeypatch.setattr(video.subprocess, "run", timeout)
-    with pytest.raises(subprocess.TimeoutExpired):
+    expected_error = RuntimeError if stage == "mux" else subprocess.TimeoutExpired
+    with pytest.raises(expected_error) as failure:
         core.WatermarkCleaner(engine=IdentityEngine()).run(
             source, output, watermark_regions=region(), working_directory=workspace
         )
+    if stage == "mux":
+        assert "Finishing the video timed out after 3600 seconds" in str(failure.value)
+        assert isinstance(failure.value.__cause__, subprocess.TimeoutExpired)
     assert source.read_bytes() == original
     assert not output.exists()
     assert list(workspace.iterdir()) == [sentinel]

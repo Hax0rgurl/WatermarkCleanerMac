@@ -1,9 +1,9 @@
 [project]
 name = "mac-watermark-cleaner"
-version = "2.0.1"
+version = "2.1.0"
 description = "Local video watermark restoration with E2FGVI-HQ and ProPainter"
 readme = "README.md"
-license = "Apache-2.0 AND MIT AND CC-BY-NC-4.0 AND LicenseRef-S-Lab-1.0 AND BSD-3-Clause"
+license = "Apache-2.0 AND MIT AND CC-BY-NC-4.0 AND LicenseRef-S-Lab-1.0 AND BSD-3-Clause AND CC0-1.0"
 license-files = [
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
@@ -53,4 +53,4 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.package-data]
-watermark_cleaner = ["watermark_selector/*.html", "backends/**/LICENSE*", "backends/**/UPSTREAM.md"]
+watermark_cleaner = ["watermark_selector/*.html", "assets/*.png", "assets/*.svg", "assets/*.md", "backends/**/LICENSE*", "backends/**/UPSTREAM.md"]

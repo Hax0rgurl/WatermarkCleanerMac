@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
+from .templates import STYLE_OPTIONS
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
@@ -29,6 +30,12 @@ def parser() -> argparse.ArgumentParser:
         help="New MP4 file, or output folder for a batch",
     )
     arguments.add_argument("--engine", choices=["e2fgvi", "propainter"], default="e2fgvi")
+    arguments.add_argument(
+        "--watermark-style",
+        choices=list(STYLE_OPTIONS.values()),
+        default="auto",
+        help="Constrain automatic masks to a platform's download-watermark layout",
+    )
     arguments.add_argument(
         "--watermark-text",
         default="",
@@ -104,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
                 progress_callback=progress,
                 watermark_regions=regions,
                 watermark_text=options.watermark_text,
+                watermark_style=options.watermark_style,
             )
             print(f"Completed: {output}", flush=True)
         return 0

@@ -39,8 +39,8 @@ function controls(){
  if(r){document.getElementById('range').textContent=`${r.label} · ${clock(frameTime(r.start_frame),true)} to ${clock(frameTime(r.end_frame),true)} · ${r.source==='suggested'?'Automatically checked':'Manual correction'}`;document.getElementById('label').value=r.label;document.getElementById('start').value=(frameTime(r.start_frame)).toFixed(3);document.getElementById('end').value=(frameTime(r.end_frame)).toFixed(3);document.getElementById('start').max=document.getElementById('end').max=duration;}
  timeline();draw();resize();
 }
-function publish(){controls();send('streamlit:setComponentValue',{value:{revision,regions},dataType:'json'});}
-function change(fn){const r=selectedRegion();if(!r)return;fn(r);r.source='manual';delete r.timing_verified;delete r.mask;delete r.glyph_mask;delete r.parts;delete r.anchor_boxes;delete r.mask_parts;delete r.anchor_bbox;delete r.icon_search;publish();}
+function publish(){controls();send('streamlit:setComponentValue',{value:{revision,source_key:sourceKey,regions},dataType:'json'});}
+function change(fn){const r=selectedRegion();if(!r)return;fn(r);r.source='manual';delete r.verification;delete r.timing_verified;delete r.timing_method;delete r.mask;delete r.glyph_mask;delete r.parts;delete r.anchor_boxes;delete r.mask_parts;delete r.anchor_bbox;delete r.icon_search;publish();}
 function point(e){const r=canvas.getBoundingClientRect();return [Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))];}
 canvas.addEventListener('pointerdown',e=>{if(!drawing)return;const p=point(e);drag=[...p,...p];canvas.setPointerCapture(e.pointerId);draw();});
 canvas.addEventListener('pointermove',e=>{if(!drag)return;const p=point(e);drag[2]=p[0];drag[3]=p[1];draw();});

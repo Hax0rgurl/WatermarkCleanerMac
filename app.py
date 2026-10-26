@@ -21,7 +21,8 @@ from watermark_cleaner.completion import (
     validate_source_identity,
 )
 from watermark_cleaner.configs import LOGS_PATH, OUTPUT_DIR, RUNTIME_ROOT
-from watermark_cleaner.region_selector import select_watermark_regions, selected_regions
+from watermark_cleaner.region_selector import regions_for_processing, select_watermark_regions
+from watermark_cleaner.templates import STYLE_OPTIONS
 
 VIDEO_TYPES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 ENGINE_OPTIONS = {"E2FGVI-HQ": "e2fgvi", "ProPainter": "propainter"}
@@ -136,6 +137,7 @@ def _process_source(
     final_path: Path | None = None,
     watermark_regions=None,
     watermark_text: str = "",
+    watermark_style: str = "auto",
 ) -> Path:
     """Publish a verified result while retaining the exact selected source."""
     validate_source_identity(identity)
@@ -159,6 +161,14 @@ def _process_source(
         return prepare_job_publication(workspace, partial, visible)
 
     try:
+        if watermark_regions is None:
+            watermark_regions = regions_for_processing(
+                identity,
+                watermark_text=watermark_text,
+                watermark_style=watermark_style,
+                progress=lambda value, text: update(int(max(0.0, min(1.0, float(value))) * 14)),
+            )
+            validate_source_identity(identity)
         cleaner.run(
             identity.source_path,
             destination,
@@ -168,6 +178,7 @@ def _process_source(
             before_publish=before_publish,
             watermark_regions=watermark_regions,
             watermark_text=watermark_text,
+            watermark_style=watermark_style,
         )
         validate_source_identity(identity)
         if not destination.is_file() or destination.stat().st_size == 0:
@@ -423,6 +434,10 @@ def main() -> None:
     if ready:
         st.caption("Both models are ready. Video processing stays on this Mac.")
     with st.expander("Watermark options"):
+        style_label = st.selectbox(
+            "Watermark style", list(STYLE_OPTIONS), index=0, key="watermark-style"
+        )
+        watermark_style = STYLE_OPTIONS[style_label]
         watermark_text = st.text_input(
             "Watermark name (optional)",
             value="",
@@ -430,7 +445,7 @@ def main() -> None:
             key="watermark-name",
         )
         st.caption(
-            "Leave this blank to find common platform watermarks automatically. Enter a name if a brand is missed."
+            "Auto finds common platform watermarks. Choose a style for its logo and creator text, or enter a specific name."
         )
     sources = _load_native_selection()
     st.subheader("VIDEOS")
@@ -441,7 +456,9 @@ def main() -> None:
         if review:
             for identity in sources:
                 with st.expander(identity.source_path.name, expanded=True):
-                    select_watermark_regions(identity, watermark_text=watermark_text)
+                    select_watermark_regions(
+                        identity, watermark_text=watermark_text, watermark_style=watermark_style
+                    )
     else:
         st.info("Use CHOOSE VIDEOS in the app toolbar to select a video.")
     if st.button(
@@ -466,8 +483,8 @@ def main() -> None:
                         cleaner,
                         index,
                         len(sources),
-                        watermark_regions=selected_regions(identity, watermark_text),
                         watermark_text=watermark_text,
+                        watermark_style=watermark_style,
                     )
                 except Exception as exc:
                     st.error(f"{identity.source_path.name}: {exc}")

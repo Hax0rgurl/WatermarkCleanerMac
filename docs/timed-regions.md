@@ -21,7 +21,19 @@ cleaner.run(
 
 Coordinates are normalized `[left, top, right, bottom]` within `0..1`. Frame numbers are zero-based: the start is included, and the stop is excluded. These example intervals require a source with at least 780 decoded frames. A bare four-coordinate list applies throughout the video.
 
-Pass reviewed manual regions to skip automatic scanning. Without regions, `watermark_text="InVideo, Storyblocks"` narrows the scan to those names. Omitting the text uses the built-in platform-name list. Automatic scanning needs the native Apple Vision helper produced by the build script.
+Pass reviewed manual regions to skip automatic scanning. Without regions, `watermark_text="InVideo, Storyblocks"` narrows the scan to those names. Use `watermark_style="tiktok"`, `"instagram"`, `"capcut"`, or `"invideo"` to choose a platform profile; the default is `"auto"`. Omitting the text uses the selected profile's platform names, or the built-in name list in Auto. Automatic scanning needs the native Apple Vision helper produced by the build script.
+
+For example, automatic Instagram-profile processing uses:
+
+```python
+cleaner.run(
+    Path("input.mp4"),
+    Path("cleaned.mp4"),
+    watermark_style="instagram",
+)
+```
+
+The desktop player keeps saved edits separate by source identity, style, and target text. Scanner-version changes refresh automatic ranges while retaining manually changed or deleted occurrences. API callers supplying explicit regions own their saved-region provenance; those regions are validated but do not trigger a new scan.
 
 Regions and intervals are checked against actual decoded dimensions and frame counts. Invalid coordinates, empty intervals, and out-of-range frames fail before rendering. Automatic suggestions also need the scanner's identity-check marker. That marker records how a suggestion was checked; it does not independently prove perfect detection.
 

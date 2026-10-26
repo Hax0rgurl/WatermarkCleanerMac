@@ -22,6 +22,7 @@ from .completion import SourceIdentity, SourceIdentityError, validate_source_ide
 from .masks import build_masks, context_crop
 from .scanner import scan_video
 from .timed_regions import normalize_regions, compile_regions, region_boxes
+from .templates import validate_style
 from .video import iter_frames, probe_video, VideoWriter, mux_audio, verify_output
 
 
@@ -167,8 +168,10 @@ class WatermarkCleaner:
         before_publish: Callable | None = None,
         watermark_regions: list | None = None,
         watermark_text: str = "",
+        watermark_style: str = "auto",
     ) -> None:
         del quiet
+        watermark_style = validate_style(watermark_style)
         source, destination = (
             Path(input_video_path).expanduser(),
             Path(output_video_path).expanduser(),
@@ -189,7 +192,10 @@ class WatermarkCleaner:
         progress(0)
         if watermark_regions is None:
             scan = scan_video(
-                source, watermark_text, progress=lambda value, text: progress(int(value * 15))
+                source,
+                watermark_text,
+                progress=lambda value, text: progress(int(value * 15)),
+                watermark_style=watermark_style,
             )
             watermark_regions = scan["regions"]
         if not watermark_regions:

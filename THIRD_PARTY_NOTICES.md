@@ -39,6 +39,10 @@ These checkpoint hashes are fixed in `watermark_cleaner/model_store.py`. Files a
 | recurrent_flow_completion.pth | `22939a1a7900da878dbe1ccd011d646b1bfb30b8290039d8ff0e0c2fefbfd283` |
 | ProPainter.pth | `12c070c4b48f374c91d8a2a17851140b85c159621080989f9e191bbc18bd6591` |
 
+## Logo silhouettes
+
+TikTok and Instagram silhouette assets come from [Simple Icons 16.0.0](https://github.com/simple-icons/simple-icons/tree/16.0.0), distributed under CC0-1.0. The original SVGs, alpha PNG rasterizations, and provenance are in `watermark_cleaner/assets/`. The complete dedication is in `THIRD_PARTY_LICENSES/SimpleIcons-CC0.txt`. The geometric Reels-style clapperboard silhouette is authored for this app under Apache-2.0. Brand names and logos remain their owners' trademarks.
+
 ## Retained project attribution
 
 The repository originated from SoraWatermarkCleaner, distributed under Apache License 2.0. Its license remains in `LICENSE`.

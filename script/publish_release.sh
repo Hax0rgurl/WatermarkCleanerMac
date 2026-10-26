@@ -23,6 +23,17 @@ NOTES="$ROOT_DIR/docs/RELEASE-NOTES.md"
   shasum -a 256 -c "$CHECKSUM_NAME"
 )
 
+require_current_main() {
+  local main_ref main_commit
+  main_ref="$(git ls-remote --exit-code origin refs/heads/main)"
+  main_commit="$(printf '%s\n' "$main_ref" | awk 'NR == 1 {print $1}')"
+  if [[ "$main_commit" != "$GITHUB_SHA" ]]; then
+    echo "SKIPPED_RELEASE: main is now $main_commit; this verified commit $GITHUB_SHA was superseded."
+    exit 0
+  fi
+}
+
+require_current_main
 tag_refs=""
 if tag_refs="$(git ls-remote --exit-code --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")"; then
   tag_commit="$(printf '%s\n' "$tag_refs" | awk '$2 ~ /\^\{\}$/ {print $1}')"
@@ -38,6 +49,7 @@ else
     exit "$result"
   fi
   # This push is intentionally not forced. A concurrent different tag fails safely.
+  require_current_main
   git push origin "$GITHUB_SHA:refs/tags/$TAG"
 fi
 
@@ -53,14 +65,17 @@ if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,url > "$rel
   )
   is_draft="$(python3 -c 'import json, sys; print(str(json.load(open(sys.argv[1]))["isDraft"]).lower())' "$release_details")"
   if [[ "$is_draft" == true ]]; then
+    require_current_main
     gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
   else
     echo "Existing release $TAG already belongs to this commit and its assets verify. It was kept unchanged."
   fi
 else
+  require_current_main
   gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
     --target "$GITHUB_SHA" --title "MAC WATERMARK CLEANER $VERSION" \
     --notes-file "$NOTES" --draft \
     "$ROOT_DIR/dist/$ZIP_NAME" "$ROOT_DIR/dist/$CHECKSUM_NAME"
+  require_current_main
   gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
 fi

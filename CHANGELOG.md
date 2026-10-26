@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+
+- Cover the complete adjacent TikTok icon, including its colored edges and lower loop, in fresh and previously cached automatic selections.
+- Preserve nonzero video starting timestamps, final-frame duration, and audio timing with exact packet-copy muxing.
+- Prevent an older successful CI run from publishing a release after a newer main commit supersedes it. All build and test checks remain enabled.
+
 ## 2.0.0
 
 - Replace DeMark/LaMa restoration with E2FGVI-HQ and ProPainter video inpainting. E2FGVI-HQ is the default.

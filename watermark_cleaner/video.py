@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
 import hashlib
+from math import lcm
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from typing import Iterator
 
 import av
@@ -213,35 +215,103 @@ class VideoWriter:
                 self.closed = True
 
 
+def _movie_timescale(source: Path, video_time_base: Fraction) -> int:
+    """Represent every source track clock without rounding MP4 edit offsets."""
+    clock = video_time_base.denominator
+    with av.open(str(source)) as container:
+        for stream in container.streams.audio:
+            if stream.time_base is None or stream.time_base <= 0:
+                raise ValueError("An audio stream has no valid timestamp time base.")
+            clock = lcm(clock, Fraction(stream.time_base).denominator)
+    if not 0 < clock <= 2_147_483_647:
+        raise ValueError("The source track clocks cannot be represented exactly in an MP4 movie.")
+    return clock
+
+
+def _mux_audio_packets(source: str, video: str, output: str, clock: str, video_clock: str) -> None:
+    """Copy packets with the same demuxer that supplied their verified timestamps.
+
+    FFmpeg CLI remuxing can round a nonzero edit offset and infer a different
+    final packet duration. PyAV retains the source packet durations and audio
+    trim data. Merge the two input iterators with only one packet pending each.
+    """
+    if Path(output).exists() or Path(output).is_symlink():
+        raise FileExistsError(f"Refusing to overwrite existing output: {output}")
+    with (
+        av.open(source) as original,
+        av.open(video) as encoded,
+        av.open(
+            output,
+            "w",
+            format="mp4",
+            options={
+                "movie_timescale": clock,
+                "video_track_timescale": video_clock,
+                "movflags": "+faststart",
+                "avoid_negative_ts": "disabled",
+            },
+        ) as result,
+    ):
+        result.metadata.update(original.metadata)
+        source_video = encoded.streams.video[0]
+        target_video = result.add_stream_from_template(source_video)
+        target_video.metadata.update(source_video.metadata)
+        audio_streams = list(original.streams.audio)
+        target_audio = {}
+        for stream in audio_streams:
+            target_audio[stream.index] = result.add_stream_from_template(stream)
+            target_audio[stream.index].metadata.update(stream.metadata)
+
+        def packets(container, streams, targets):
+            for packet in container.demux(streams):
+                if not packet.size:
+                    continue
+                stamp = packet.dts if packet.dts is not None else packet.pts
+                if stamp is None or packet.time_base is None:
+                    raise ValueError(
+                        "A media packet has no timestamp for exact audio/video muxing."
+                    )
+                yield Fraction(stamp) * packet.time_base, packet, targets[packet.stream.index]
+
+        inputs = [packets(encoded, [source_video], {source_video.index: target_video})]
+        if audio_streams:
+            inputs.append(packets(original, audio_streams, target_audio))
+        pending = [next(iterator, None) for iterator in inputs]
+        while any(packet is not None for packet in pending):
+            index = min(
+                (index for index, packet in enumerate(pending) if packet is not None),
+                key=lambda index: pending[index][0],
+            )
+            _, packet, target = pending[index]
+            packet.stream = target
+            result.mux(packet)
+            pending[index] = next(inputs[index], None)
+
+
 def mux_audio(source: Path, video: Path, output: Path, info: VideoInfo) -> None:
+    if output.exists() or output.is_symlink():
+        raise FileExistsError(f"Refusing to overwrite existing output: {output}")
+    clock = _movie_timescale(source, info.time_base)
+    # Keep the existing finishing deadline while isolating native container I/O.
+    environment = dict(os.environ)
+    package_root = str(Path(__file__).resolve().parent.parent)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        part for part in (package_root, environment.get("PYTHONPATH")) if part
+    )
     command = [
-        ffmpeg_path(),
-        "-v",
-        "error",
-        "-nostdin",
-        "-n",
-        "-copyts",
-        "-i",
-        str(video),
-        "-i",
-        str(source),
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a?",
-        "-map_metadata",
-        "1",
+        sys.executable,
         "-c",
-        "copy",
-        "-avoid_negative_ts",
-        "disabled",
-        "-movflags",
-        "+faststart",
+        "import sys; from watermark_cleaner.video import _mux_audio_packets; "
+        "_mux_audio_packets(*sys.argv[1:])",
+        str(source),
+        str(video),
+        str(output),
+        str(clock),
+        str(info.time_base.denominator),
     ]
-    if info.time_base.numerator == 1:
-        command += ["-video_track_timescale", str(info.time_base.denominator)]
-    command += [str(output)]
-    subprocess.run(command, capture_output=True, text=True, timeout=3600, check=True)
+    subprocess.run(
+        command, env=environment, capture_output=True, text=True, timeout=3600, check=True
+    )
 
 
 @lru_cache(maxsize=12)

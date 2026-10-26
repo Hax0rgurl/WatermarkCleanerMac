@@ -8,7 +8,7 @@ A local Apple Silicon video watermark cleaner with two restoration engines: **E2
 
 Requires **Apple Silicon and macOS 14 or later**.
 
-1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.0.zip`, unzip it, and move **MAC WATERMARK CLEANER.app** into Applications.
+1. Download `MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.1.zip`, unzip it, and move **MAC WATERMARK CLEANER.app** into Applications.
 2. Open the app. The first launch automatically installs its private Python runtime and downloads **both** restoration model sets. Keep the internet connection available until setup finishes. The window shows setup and model-download progress.
 3. Choose videos, select E2FGVI-HQ or ProPainter, and press **REMOVE WATERMARKS**.
 4. Open the completed copy from the app or `~/Movies/MAC WATERMARK CLEANER`. Your original stays in place.
@@ -63,8 +63,8 @@ The first command builds the app and validates its native executable, resources,
 
 ```text
 dist/MAC WATERMARK CLEANER.app
-dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.0.zip
-dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.0.zip.sha256
+dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.1.zip
+dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.1.zip.sha256
 ```
 
 For source development and the full test suite:

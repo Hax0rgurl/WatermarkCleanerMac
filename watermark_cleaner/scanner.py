@@ -10,6 +10,7 @@ from typing import Callable
 import numpy as np
 from scipy import ndimage
 
+from .masks import tiktok_icon_box
 from .video import iter_frames, probe_video
 from .watermark_guard import LocalTextReader, matches_target, target_names
 
@@ -94,16 +95,11 @@ def _candidate(anchor, texts, width, height, label):
         adjacent = oy1 >= y1 - h * 0.3 and oy1 <= y2 + h * 2 and ox1 < x2 + h and ox2 > x1 - h
         if adjacent and (value.startswith("@") or re.match(r"^[@©]\s*\w", value)):
             parts.append(other)
-    # This search area is used only for persistent logo pixels, never a solid box.
-    # TikTok's music note sits against the wordmark. Searching several text
-    # heights above it can mistake bright scene details for part of the logo.
+    # The named TikTok identity authorizes its complete adjacent note, including
+    # disconnected colored fringes below the text baseline. Other brands retain
+    # a search area for persistent glyph components.
     if label == "tiktok":
-        icon = (
-            max(0, x1 - h * 0.6),
-            max(0, y1 - h * 0.6),
-            min(width, x1 + h * 1.4),
-            min(height, y2 + h * 0.2),
-        )
+        icon = tiktok_icon_box(box, width, height)
     else:
         icon = (
             max(0, x1 - h),

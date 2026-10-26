@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import plistlib
 from pathlib import Path
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT_NAME = "MAC WATERMARK CLEANER"
-VERSION = "2.0.0"
+VERSION = "2.0.1"
+
+
+def test_package_metadata_matches_app_release_version() -> None:
+    from watermark_cleaner import __version__
+
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert metadata["project"]["version"] == VERSION == __version__
+    assert '"CFBundleVersion": "201"' in (ROOT / "script/build_macos_app.sh").read_text()
 
 
 def test_product_name_is_consistent_in_user_facing_source() -> None:

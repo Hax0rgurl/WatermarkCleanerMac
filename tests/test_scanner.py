@@ -111,7 +111,16 @@ def test_tiktok_icon_search_stays_against_the_confirmed_wordmark():
 
 def test_manual_masks_are_exact_and_end_exclusive():
     frames = [np.zeros((160, 240, 3), np.uint8) for _ in range(5)]
-    region = {"bbox": [0.1, 0.2, 0.3, 0.4], "start_frame": 11, "end_frame": 13, "source": "manual"}
+    region = {
+        "bbox": [0.1, 0.2, 0.3, 0.4],
+        "start_frame": 11,
+        "end_frame": 13,
+        "source": "manual",
+        "label": "tiktok",
+        "verification": "named-ocr-v1",
+        "anchor_bbox": [0.1, 0.2, 0.3, 0.4],
+        "mask_parts": [[0.1, 0.2, 0.3, 0.4]],
+    }
     masks = build_masks(frames, 10, [region])
     assert not masks[[0, 3, 4]].any()
     assert np.all(masks[1:3, 32:64, 24:72] == 255)
@@ -163,3 +172,76 @@ def test_real_native_reader_recognizes_branding_and_caption_separately():
     assert any(matches_target(t["text"], ["tiktok"]) for t in texts)
     assert any("FOCUS" in t["text"] for t in texts)
     assert not any(matches_target(t["text"], scanner.BRANDS) for t in texts if "FOCUS" in t["text"])
+
+
+def test_named_tiktok_masks_complete_disconnected_note_and_lower_colored_fringe():
+    frames = [np.zeros((160, 240, 3), np.uint8) for _ in range(4)]
+    note = np.zeros((160, 240), dtype=bool)
+    note[78:96, 110:114] = True  # White stem, separate from the loop.
+    note[96:102, 98:105] = True  # White lower loop.
+    note[99:106, 94:97] = True  # Cyan fringe below the text baseline.
+    note[103:106, 116:119] = True  # Disconnected red fringe.
+    for frame in frames:
+        frame[78:96, 110:114] = 245
+        frame[96:102, 98:105] = 245
+        frame[99:106, 94:97] = [245, 245, 10]
+        frame[103:106, 116:119] = [10, 20, 245]
+        frame[50:56, 100:106] = [0, 30, 250]  # Unrelated scene detail above.
+        frame[82:98:2, 126:177] = 245
+    region = {
+        "bbox": [92 / 240, 72 / 160, 185 / 240, 110 / 160],
+        "mask_parts": [[100 / 240, 80 / 160, 180 / 240, 100 / 160]],
+        "anchor_bbox": [100 / 240, 80 / 160, 180 / 240, 100 / 160],
+        "icon_search": [95 / 240, 75 / 160, 120 / 240, 101 / 160],
+        "start_frame": 11,
+        "end_frame": 13,
+        "label": "tiktok",
+        "source": "suggested",
+        "verification": "named-ocr-v1",
+    }
+    masks = build_masks(frames, 10, [region])
+    assert np.all(masks[1:3, note] == 255)
+    assert not masks[[0, 3]].any()
+    assert not masks[:, :65].any()
+
+
+def test_cached_tiktok_geometry_expands_its_patch_from_the_verified_anchor():
+    frames = [np.zeros((160, 240, 3), np.uint8)]
+    # Schema3 selections from2.0.0 may have a narrow/obsolete icon search and
+    # envelope. The stored independently verified anchor remains authoritative.
+    region = {
+        "bbox": [100 / 240, 80 / 160, 180 / 240, 100 / 160],
+        "mask_parts": [[100 / 240, 80 / 160, 180 / 240, 100 / 160]],
+        "anchor_bbox": [100 / 240, 80 / 160, 180 / 240, 100 / 160],
+        "icon_search": [108 / 240, 82 / 160, 110 / 240, 84 / 160],
+        "start_frame": 0,
+        "end_frame": 1,
+        "label": "TikTok",
+        "source": "suggested",
+        "verification": "named-ocr-v1",
+    }
+    masks = build_masks(frames, 0, [region])
+    assert np.all(masks[0, 75:107, 92:120] == 255)
+    assert not masks[0, :70].any()
+    assert not masks[0, 110:].any()
+    assert region["bbox"] == [100 / 240, 80 / 160, 180 / 240, 100 / 160]
+
+
+def test_full_icon_envelope_requires_named_tiktok_identity():
+    frame = np.zeros((160, 240, 3), np.uint8)
+    frame[82:98:2, 126:177] = 245
+    region = {
+        "bbox": [90 / 240, 70 / 160, 185 / 240, 110 / 160],
+        "mask_parts": [[100 / 240, 80 / 160, 180 / 240, 100 / 160]],
+        "anchor_bbox": [100 / 240, 80 / 160, 180 / 240, 100 / 160],
+        "icon_search": [92 / 240, 75 / 160, 120 / 240, 107 / 160],
+        "start_frame": 0,
+        "end_frame": 1,
+        "label": "custom brand",
+        "source": "suggested",
+        "verification": "named-ocr-v1",
+    }
+    masks = build_masks([frame], 0, [region])
+    assert not masks[0, 103:106, 94:97].any()
+    unverified = {**region, "label": "tiktok", "verification": "old"}
+    assert not build_masks([frame], 0, [unverified])[0, 103:106, 94:97].any()

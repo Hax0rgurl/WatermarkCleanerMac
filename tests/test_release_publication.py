@@ -14,11 +14,11 @@ def release_project(tmp_path):
     (tmp_path / "script").mkdir()
     shutil.copy2(root / "script/publish_release.sh", tmp_path / "script/publish_release.sh")
     (tmp_path / "docs").mkdir()
-    (tmp_path / "docs/RELEASE-NOTES.md").write_text("Version 2.0.0\n")
-    (tmp_path / "pyproject.toml").write_text('[project]\nversion="2.0.0"\n')
+    (tmp_path / "docs/RELEASE-NOTES.md").write_text("Version 2.0.1\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion="2.0.1"\n')
     dist = tmp_path / "dist"
     dist.mkdir()
-    archive = dist / "MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.0.zip"
+    archive = dist / "MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.1.zip"
     archive.write_bytes(b"verified archive")
     archive.with_suffix(".zip.sha256").write_text(
         f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n"
@@ -33,9 +33,14 @@ def release_project(tmp_path):
         "with Path(os.environ['RELEASE_EVENTS']).open('a') as log:\n"
         "    log.write('git ' + ' '.join(sys.argv[1:]) + '\\n')\n"
         "if sys.argv[1] == 'ls-remote':\n"
+        "    if '--tags' not in sys.argv:\n"
+        "        main = os.environ.get('CURRENT_MAIN', os.environ['GITHUB_SHA'])\n"
+        "        if os.environ.get('MAIN_HEAD_FILE'): main = Path(os.environ['MAIN_HEAD_FILE']).read_text()\n"
+        "        print(main + '\\trefs/heads/main')\n"
+        "        sys.exit(0)\n"
         "    commit = os.environ.get('EXISTING_TAG', '')\n"
         "    if not commit: sys.exit(2)\n"
-        "    print(commit + '\\trefs/tags/v2.0.0')\n"
+        "    print(commit + '\\trefs/tags/v2.0.1')\n"
     )
     gh = commands / "gh"
     gh.write_text(
@@ -51,6 +56,8 @@ def release_project(tmp_path):
         "elif args[:2] == ['release', 'download']:\n"
         "    directory = Path(args[args.index('--dir') + 1])\n"
         "    for file in Path('dist').iterdir(): shutil.copy2(file, directory / file.name)\n"
+        "elif args[:2] == ['release', 'create'] and os.environ.get('SUPERSEDE_DURING_UPLOAD'):\n"
+        "    Path(os.environ['MAIN_HEAD_FILE']).write_text('c' * 40)\n"
     )
     git.chmod(0o755)
     gh.chmod(0o755)
@@ -80,8 +87,8 @@ def run_release(project):
 def test_new_release_uploads_a_draft_then_publishes(release_project):
     result, events = run_release(release_project)
     assert result.returncode == 0, result.stderr
-    assert "git push origin " + "a" * 40 + ":refs/tags/v2.0.0" in events
-    assert "gh release create v2.0.0" in events
+    assert "git push origin " + "a" * 40 + ":refs/tags/v2.0.1" in events
+    assert "gh release create v2.0.1" in events
     assert "--verify-tag" in events and "--draft " in events
     assert events.index("release create") < events.index("release edit")
     assert "--draft=false" in events
@@ -106,7 +113,29 @@ def test_existing_same_commit_release_is_verified_and_unchanged(release_project)
 
 def test_bad_archive_checksum_prevents_tag_and_release_mutation(release_project):
     directory, _ = release_project
-    (directory / "dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.0.zip").write_bytes(b"changed")
+    (directory / "dist/MAC-WATERMARK-CLEANER-macOS-arm64-v2.0.1.zip").write_bytes(b"changed")
     result, events = run_release(release_project)
     assert result.returncode != 0
     assert not events
+
+
+def test_superseded_commit_does_not_create_a_tag_or_release(release_project):
+    release_project[1]["CURRENT_MAIN"] = "c" * 40
+    result, events = run_release(release_project)
+    assert result.returncode == 0, result.stderr
+    assert "SKIPPED_RELEASE" in result.stdout
+    assert "refs/heads/main" in events
+    assert "git push" not in events
+    assert "gh release" not in events
+
+
+def test_new_main_commit_during_upload_prevents_publication(release_project):
+    directory, environment = release_project
+    main_file = directory / "main-head"
+    main_file.write_text(environment["GITHUB_SHA"])
+    environment.update(MAIN_HEAD_FILE=str(main_file), SUPERSEDE_DURING_UPLOAD="1")
+    result, events = run_release(release_project)
+    assert result.returncode == 0, result.stderr
+    assert "SKIPPED_RELEASE" in result.stdout
+    assert "gh release create" in events and "--draft " in events
+    assert "gh release edit" not in events

@@ -43,6 +43,63 @@ def test_nonzero_video_start_is_preserved(tmp_path):
     assert info.frame_times[0] == 0.1
 
 
+@pytest.mark.parametrize("with_audio", [False, True])
+def test_public_pipeline_preserves_fractional_nonzero_start_and_audio(tmp_path, with_audio):
+    from watermark_cleaner.core import WatermarkCleaner
+
+    pts = [441441, 444444, 447447, 450450]
+    source = create_video(tmp_path / "offset.mp4", pts=pts)
+    if with_audio:
+        tone = create_video(tmp_path / "tone.mp4", audio=True)
+        combined = tmp_path / "offset-with-audio.mp4"
+        with (
+            av.open(str(source)) as pictures,
+            av.open(str(tone)) as sound,
+            av.open(str(combined), "w", options={"movie_timescale": "4410000"}) as destination,
+        ):
+            picture_stream = destination.add_stream_from_template(pictures.streams.video[0])
+            audio_stream = destination.add_stream_from_template(sound.streams.audio[0])
+            for packet in pictures.demux(video=0):
+                if packet.size:
+                    packet.stream = picture_stream
+                    destination.mux(packet)
+            for packet in sound.demux(audio=0):
+                if packet.size:
+                    # A deliberate 4.9-second audio offset also tests AAC trim
+                    # metadata and effective stream bounds after remuxing.
+                    offset = int(Fraction(49, 10) / packet.time_base)
+                    packet.pts += offset
+                    packet.dts += offset
+                    packet.stream = audio_stream
+                    destination.mux(packet)
+        source = combined
+    original = source.read_bytes()
+    before = video.probe_video(source)
+    assert [stamp * before.time_base for stamp in before.pts] == [
+        Fraction(stamp, 90000) for stamp in pts
+    ]
+
+    class IdentityEngine:
+        def restore(self, frames, masks, progress=None):
+            return frames.copy()
+
+    output = tmp_path / "cleaned.mp4"
+    WatermarkCleaner(engine=IdentityEngine()).run(
+        source,
+        output,
+        watermark_regions=[{"bbox": [0.1, 0.1, 0.3, 0.3], "start_frame": 0, "end_frame": 4}],
+    )
+    video.verify_output(source, output, before)
+    after = video.probe_video(output)
+    assert [stamp * after.time_base for stamp in after.pts] == [
+        Fraction(stamp, 90000) for stamp in pts
+    ]
+    assert video.audio_signatures(source) == video.audio_signatures(output)
+    assert video.audio_timing(source) == video.audio_timing(output)
+    assert after.audio_streams == int(with_audio)
+    assert source.read_bytes() == original
+
+
 def test_long_final_frame_duration_is_preserved(tmp_path):
     source = create_video(tmp_path / "held.mp4", pts=[0, 3000, 6000], durations=[3000, 3000, 18000])
     info = round_trip(source, tmp_path / "copy.mp4")
@@ -90,6 +147,21 @@ def test_mux_timeout_is_bounded_and_not_reported_as_success(monkeypatch, tmp_pat
     monkeypatch.setattr(video.subprocess, "run", fail)
     with pytest.raises(subprocess.TimeoutExpired):
         video.mux_audio(source, source, tmp_path / "output.mp4", video.probe_video(source))
+
+
+def test_unrepresentable_shared_movie_clock_is_rejected(tmp_path):
+    source = create_video(tmp_path / "audio.mp4", audio=True)
+    with pytest.raises(ValueError, match="cannot be represented exactly"):
+        video._movie_timescale(source, Fraction(1, 2_147_483_647))
+
+
+def test_mux_keeps_an_existing_destination(tmp_path):
+    source = create_video(tmp_path / "source.mp4", audio=True)
+    output = tmp_path / "existing.mp4"
+    output.write_bytes(b"existing user content")
+    with pytest.raises(FileExistsError, match="Refusing to overwrite"):
+        video.mux_audio(source, source, output, video.probe_video(source))
+    assert output.read_bytes() == b"existing user content"
 
 
 def test_verifier_rejects_retimed_same_count_video(tmp_path):

@@ -1,6 +1,6 @@
 [project]
 name = "mac-watermark-cleaner"
-version = "2.0.0"
+version = "2.0.1"
 description = "Local video watermark restoration with E2FGVI-HQ and ProPainter"
 readme = "README.md"
 license = "Apache-2.0 AND MIT AND CC-BY-NC-4.0 AND LicenseRef-S-Lab-1.0 AND BSD-3-Clause"

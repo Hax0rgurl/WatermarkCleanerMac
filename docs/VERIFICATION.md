@@ -22,9 +22,13 @@ The new CLI also completed a real four-frame E2FGVI-HQ restoration using explici
 
 ## Media and regression coverage
 
-The complete local suite passed: **167 tests**, including actual pretrained inference for both engines, native Apple Vision text recognition, native recoverable Trash receipts, CLI execution, real MP4 encoding/muxing/full decoding, and output-publication races. Authored Python lint and format checks also passed.
+The complete local suite passed: **177 tests**, including actual pretrained inference for both engines, native Apple Vision text recognition, native recoverable Trash receipts, CLI execution, real MP4 encoding/muxing/full decoding, and output-publication races. Authored Python lint and format checks also passed.
 
 The supplied 372-frame variable-rate sample was scanned locally. The scan found the TikTok watermark in frames 0 through 127 at its first position and frames 128 through 371 at its second position. These bounds were checked against decoded source frames. Mask inspection prompted a tighter adjoining-logo search to exclude a bright scene detail.
+
+Version 2.0.1 also covers the complete adjacent TikTok note, including disconnected colored edges and its lower loop. Both real engines processed three difficult excerpts, 20 source frames per engine, using previously cached automatic regions. The public pipeline passed final timing/decode checks, reached completion, and kept each source unchanged. Inspected frames 127, 128, 219, and 371 no longer contained the colored icon remnants. Background reconstruction still has local softness; this is not a claim of perfect restoration or a fresh full-length quality review.
+
+Nonzero starting timestamps are also covered. Packet-copy muxing uses an exact shared movie clock, preserving video offsets, held final-frame duration, original audio bytes, and audio timing. Tests reproduce the previously rounded offsets with and without audio, and both 372-frame sample renders passed the final mux/verification step with the original source unchanged.
 
 The full suite exercises both real pretrained CPU backends, timed masks, invalid input, local scanning, exact video timestamps, audio preservation, output publication, source identity, CLI behavior, and restoration failure paths. Some failure-path tests inject a restoration function; real-checkpoint tests remain separate and enabled.
 

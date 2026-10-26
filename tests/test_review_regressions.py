@@ -1,95 +1,156 @@
-"""Regression coverage for fixes ported from upstream PR 11."""
-import hashlib
-import subprocess
-from pathlib import Path
+"""Regression cases retained after replacing the original restoration pipeline."""
 
-import cv2
-import numpy as np
+from datetime import datetime
+import subprocess
+from types import SimpleNamespace
+
 import pytest
 
-from demark_world import completion, core
-from demark_world.schemas import CleanerType
-from demark_world.timed_regions import compile_regions
-from demark_world.utils.video_utils import VideoLoader
+from tests.media_fixtures import create_video
+from watermark_cleaner import core, video
+from watermark_cleaner.completion import SourceIdentityError
+from watermark_cleaner.timed_regions import compile_regions
 
 
-@pytest.fixture
-def video(tmp_path: Path) -> Path:
-    """Create a real, small video with twenty decoded frames."""
-    path = tmp_path / "input.mp4"
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (120, 80))
-    assert writer.isOpened()
-    for _ in range(20):
-        writer.write(np.full((80, 120, 3), 50, np.uint8))
-    writer.release()
-    return path
+class IdentityEngine:
+    def restore(self, frames, masks, progress=None):
+        return frames.copy()
+
+
+def region(end=20):
+    return [{"bbox": [0.1, 0.1, 0.3, 0.3], "start_frame": end - 1, "end_frame": end}]
 
 
 @pytest.mark.parametrize("value", [None, [], {}, "bad"])
-def test_invalid_coordinate_has_clear_value_error(value: object) -> None:
-    """Malformed coordinates follow the public validation contract."""
+def test_invalid_coordinate_has_clear_value_error(value):
     with pytest.raises(ValueError, match="coordinates must be numbers"):
-        compile_regions([[value, .1, .3, .3]], 120, 80, 20)
+        compile_regions([[value, 0.1, 0.3, 0.3]], 120, 80, 20)
 
 
-@pytest.mark.parametrize("reported", [0, 10, 100, float("nan")])
-def test_decoded_count_ignores_metadata(video: Path, monkeypatch: pytest.MonkeyPatch, reported: float) -> None:
-    """Even the final real frame remains selectable with inaccurate metadata."""
-    real = cv2.VideoCapture
-    class Capture:
-        def __init__(self, path: str) -> None:
-            self.capture = real(path)
-        def get(self, prop: int) -> float:
-            return reported if prop == cv2.CAP_PROP_FRAME_COUNT else self.capture.get(prop)
-        def isOpened(self) -> bool:
-            return self.capture.isOpened()
-        def read(self):
-            return self.capture.read()
-        def release(self) -> None:
-            self.capture.release()
-    monkeypatch.setattr(cv2, "VideoCapture", Capture)
-    loader = VideoLoader(video)
-    assert loader.total_frames == 20
-    assert compile_regions([{"bbox": [.1,.1,.3,.3], "start_frame": 19, "end_frame": 20}],120,80,loader.total_frames)[0].active(19)
-
-
-def test_real_public_api_finishes_and_verifies(video: Path, tmp_path: Path) -> None:
-    """Run encoding, optional audio fallback, and complete output decode."""
-    class Cleaner:
-        def clean(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-            return image
+def test_last_decoded_frame_of_variable_rate_video_is_selectable(tmp_path):
+    source = create_video(tmp_path / "input.mp4", pts=[0, 3000, 12000, 15000, 21000])
+    info = video.probe_video(source)
+    assert info.total_frames == 5
+    assert info.frame_times == [0, 1 / 30, 2 / 15, 1 / 6, 7 / 30]
+    assert compile_regions(region(5), 120, 80, info.total_frames)[0].active(4)
     output = tmp_path / "cleaned.mp4"
-    original = hashlib.sha256(video.read_bytes()).hexdigest()
-    engine = core.DeMarkWorld(cleaner_type=CleanerType.LAMA, automatic_detection=False, cleaner=Cleaner())
-    engine.run(video, output, quiet=True, watermark_regions=[{"bbox": [.1,.1,.3,.3], "start_frame": 19, "end_frame": 20}])
-    completion.verify_cleaned_video(output)
-    assert VideoLoader(output).total_frames == 20
-    assert hashlib.sha256(video.read_bytes()).hexdigest() == original
+    core.WatermarkCleaner(engine=IdentityEngine()).run(source, output, watermark_regions=region(5))
+    video.verify_output(source, output)
 
 
-def test_mux_timeout_keeps_source_and_does_not_publish(video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A finishing timeout cannot publish partial media or consume the source."""
-    partial = tmp_path / "video.partial.mp4"
-    partial.write_bytes(b"partial")
-    output = tmp_path / "output.mp4"
-    original = video.read_bytes()
+@pytest.mark.parametrize("stage", ["mux", "verify"])
+def test_finishing_timeout_keeps_source_and_does_not_publish(tmp_path, monkeypatch, stage):
+    source = create_video(tmp_path / "input.mp4", audio=True)
+    original = source.read_bytes()
+    output = tmp_path / "cleaned.mp4"
+    workspace = tmp_path / "job"
+    workspace.mkdir()
+    sentinel = workspace / "user-file.txt"
+    sentinel.write_text("keep")
+    actual_run = subprocess.run
+
     def timeout(command, **kwargs):
         assert kwargs["timeout"] == 3600
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-    monkeypatch.setattr(core.subprocess, "run", timeout)
-    engine = core.DeMarkWorld(automatic_detection=False, cleaner=object())
+        is_verification = "-xerror" in command
+        if is_verification == (stage == "verify"):
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return actual_run(command, **kwargs)
+
+    monkeypatch.setattr(video.subprocess, "run", timeout)
     with pytest.raises(subprocess.TimeoutExpired):
-        engine.merge_audio_track(video, partial, output)
-    assert video.read_bytes() == original and not output.exists()
-    assert not list(tmp_path.glob("*.audio-partial.mp4"))
+        core.WatermarkCleaner(engine=IdentityEngine()).run(
+            source, output, watermark_regions=region(), working_directory=workspace
+        )
+    assert source.read_bytes() == original
+    assert not output.exists()
+    assert list(workspace.iterdir()) == [sentinel]
 
 
-def test_verification_timeout_is_a_failed_verification(tmp_path: Path) -> None:
-    """A verifier timeout must never authorize source retirement."""
-    output = tmp_path / "output.mp4"
-    output.write_bytes(b"fixture")
-    def timeout(command, **kwargs):
-        assert kwargs["timeout"] == 3600
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-    with pytest.raises(completion.OutputVerificationError):
-        completion.verify_cleaned_video(output, runner=timeout, ffmpeg_executable="ffmpeg")
+def test_unique_output_names_do_not_hang_when_the_clock_is_frozen(tmp_path, monkeypatch):
+    now = datetime(2026, 10, 26, 5, 30, 0, 123456)
+    monkeypatch.setattr(core, "datetime", SimpleNamespace(now=lambda: now))
+    first = core.unique_mp4_path(tmp_path, "source")
+    first.write_bytes(b"keep")
+    second = core.unique_mp4_path(tmp_path, "source")
+    second.symlink_to(tmp_path / "missing")
+    third = core.unique_mp4_path(tmp_path, "source")
+    assert first.name == "source-cleaned-20261026-053000-123456.mp4"
+    assert second.name == "source-cleaned-20261026-053000-123456-2.mp4"
+    assert third.name == "source-cleaned-20261026-053000-123456-3.mp4"
+    assert first.read_bytes() == b"keep" and second.is_symlink()
+
+
+@pytest.mark.parametrize("collision", ["source", "existing", "symlink", "hardlink"])
+def test_colliding_output_cannot_replace_any_file(tmp_path, collision):
+    source = create_video(tmp_path / "input.mp4")
+    original = source.read_bytes()
+    output = tmp_path / "cleaned.mp4"
+    if collision == "source":
+        output = source
+    elif collision == "existing":
+        output.write_bytes(b"existing user file")
+    elif collision == "symlink":
+        output.symlink_to(source)
+    else:
+        output.hardlink_to(source)
+    with pytest.raises((ValueError, FileExistsError)):
+        core.WatermarkCleaner(engine=IdentityEngine()).run(
+            source, output, watermark_regions=region()
+        )
+    assert source.read_bytes() == original
+    if collision == "existing":
+        assert output.read_bytes() == b"existing user file"
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"anchor_bbox": None},
+        {"anchor_bbox": [0.1, 0.1, 0.1, 0.5]},
+        {"anchor_bbox": [float("nan"), 0.1, 0.3, 0.5]},
+        {"icon_search": [-0.1, 0.1, 0.3, 0.5]},
+        {"mask_parts": []},
+        {"mask_parts": [[0.1, 0.1, 1.5, 0.5]]},
+    ],
+)
+def test_untrusted_optional_region_metadata_is_validated_before_model_loading(
+    tmp_path, monkeypatch, metadata
+):
+    source = create_video(tmp_path / "input.mp4")
+    monkeypatch.setattr(
+        core, "get_engine", lambda *args: pytest.fail("Invalid metadata loaded the model")
+    )
+    selection = [{**region()[0], **metadata}]
+    with pytest.raises(ValueError):
+        core.WatermarkCleaner().run(source, tmp_path / "out.mp4", watermark_regions=selection)
+    assert not (tmp_path / "out.mp4").exists()
+
+
+def test_source_symlink_cannot_be_used_as_an_identity_pinned_input(tmp_path):
+    source = create_video(tmp_path / "input.mp4")
+    link = tmp_path / "source-link.mp4"
+    link.symlink_to(source)
+    original = source.read_bytes()
+    with pytest.raises(SourceIdentityError, match="symbolic link"):
+        core.WatermarkCleaner(engine=IdentityEngine()).run(
+            link, tmp_path / "out.mp4", watermark_regions=region()
+        )
+    assert link.is_symlink() and source.read_bytes() == original
+
+
+def test_decoder_cannot_end_before_the_probed_frame_count(tmp_path, monkeypatch):
+    source = create_video(tmp_path / "input.mp4")
+    actual = video.iter_frames
+
+    def short_frames(path):
+        for index, frame in enumerate(actual(path)):
+            if index == 10:
+                return
+            yield frame
+
+    monkeypatch.setattr(core, "iter_frames", short_frames)
+    with pytest.raises(ValueError, match="ended before"):
+        core.WatermarkCleaner(engine=IdentityEngine()).run(
+            source, tmp_path / "out.mp4", watermark_regions=region()
+        )
+    assert source.exists() and not (tmp_path / "out.mp4").exists()

@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT_NAME = "MAC WATERMARK CLEANER"
-VERSION = "1.1.2"
+VERSION = "2.0.0"
 
 
 def test_product_name_is_consistent_in_user_facing_source() -> None:
@@ -50,3 +50,6 @@ def test_built_bundle_branding_when_bundle_exists() -> None:
     assert info["CFBundleExecutable"] == PRODUCT_NAME
     assert info["CFBundleShortVersionString"] == VERSION
     assert (bundle / "Contents" / "MacOS" / PRODUCT_NAME).is_file()
+    assert info["CFBundleIdentifier"] == "com.hax0rgurl.MacWatermarkCleaner"
+    assert not (bundle / "Contents/Resources/engine/demark_world").exists()
+    assert (bundle / "Contents/Resources/engine/watermark_cleaner/engines.py").is_file()

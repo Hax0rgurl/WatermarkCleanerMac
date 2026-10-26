@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import subprocess
 import sys
 from pathlib import Path
@@ -9,8 +10,8 @@ from pathlib import Path
 import imageio_ffmpeg
 import pytest
 
-import demark_world.completion as completion
-from demark_world.completion import (
+import watermark_cleaner.completion as completion
+from watermark_cleaner.completion import (
     OutputVerificationError,
     SourceIdentity,
     SourceIdentityError,
@@ -34,9 +35,7 @@ def _events(path: Path) -> list[dict]:
     if not path.is_file():
         return []
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -96,9 +95,7 @@ def test_success_verifies_full_output_before_identity_pinned_trash(
     assert _events(audit)[-1]["event"] == "completed_and_trashed"
 
 
-def test_replacement_during_cleaning_is_never_trashed(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_replacement_during_cleaning_is_never_trashed(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(completion, "RUNTIME_ROOT", tmp_path / "runtime")
     source = tmp_path / "source.mp4"
     original_at_new_path = tmp_path / "selected-original-backup.mp4"
@@ -139,10 +136,7 @@ def test_replacement_during_cleaning_is_never_trashed(
     assert source.read_bytes() == b"replacement at reused path"
     assert original_at_new_path.read_bytes() == b"selected original"
     assert not output.exists()
-    assert any(
-        event["event"] == "source_identity_changed"
-        for event in _events(audit)
-    )
+    assert any(event["event"] == "source_identity_changed" for event in _events(audit))
 
 
 def test_stale_path_reuse_is_rejected_before_cleaning(tmp_path: Path) -> None:
@@ -573,14 +567,34 @@ def test_sigterm_stale_workspace_is_quarantined_on_next_startup(
     assert (recovered[0] / "video.partial.mp4").read_bytes() == b"partial"
 
 
-def test_sigterm_after_visible_publish_quarantines_exact_unverified_output(
+def test_sigterm_after_visible_publish_quarantines_exact_uncommitted_output(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.mp4"
     output = tmp_path / "output" / "source-cleaned.mp4"
     working = tmp_path / "Working"
     quarantine = tmp_path / "Failed Jobs"
-    source.write_bytes(b"selected source")
+    subprocess.run(
+        [
+            imageio_ffmpeg.get_ffmpeg_exe(),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=64x48:r=6:d=1",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    original = source.read_bytes()
     output.parent.mkdir()
     identity = SourceIdentity.capture(source)
     workspace = create_job_workspace(
@@ -588,29 +602,62 @@ def test_sigterm_after_visible_publish_quarantines_exact_unverified_output(
         output,
         working_root=working,
     )
-    script = (
-        "import pathlib,sys,time;"
-        "from demark_world.completion import mark_job_phase,prepare_job_publication;"
-        "from demark_world.core import DeMarkWorld;"
-        "w=pathlib.Path(sys.argv[1]);o=pathlib.Path(sys.argv[2]);"
-        "p=w/'video.partial.mp4';p.write_bytes(b'unverified-published-output');"
-        "DeMarkWorld._publish_no_clobber("
-        "p,o,before_publish=lambda partial,visible:"
-        "prepare_job_publication(w,partial,visible));"
-        "mark_job_phase(w,'verifying');"
-        "print('PUBLISHED',flush=True);time.sleep(60)"
-    )
+    # Use the real decoding, verification, callback and exclusive publication
+    # path. Only the costly restoration model is replaced with an identity engine.
+    script = """
+import pathlib
+import sys
+import time
+
+from watermark_cleaner.completion import prepare_job_publication
+from watermark_cleaner.core import WatermarkCleaner
+
+workspace, source, output = map(pathlib.Path, sys.argv[1:])
+
+class IdentityEngine:
+    def restore(self, frames, masks, progress=None):
+        return frames.copy()
+
+def progress(percent):
+    if percent == 100:
+        print('PUBLISHED', flush=True)
+        time.sleep(60)
+
+WatermarkCleaner(engine=IdentityEngine()).run(
+    source,
+    output,
+    working_directory=workspace,
+    watermark_regions=[{'bbox': [.1, .1, .3, .3], 'source': 'manual'}],
+    before_publish=lambda partial, visible: prepare_job_publication(
+        workspace, partial, visible
+    ),
+    progress_callback=progress,
+)
+"""
     process = subprocess.Popen(
-        [sys.executable, "-c", script, str(workspace), str(output)],
+        [sys.executable, "-c", script, str(workspace), str(source), str(output)],
         cwd=ROOT,
         stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
     )
-    assert process.stdout is not None
-    assert process.stdout.readline().strip() == "PUBLISHED"
-    assert output.read_bytes() == b"unverified-published-output"
-    process.terminate()
-    process.wait(timeout=5)
+    try:
+        assert process.stdout is not None
+        assert select.select([process.stdout], [], [], 30)[0], "Publication timed out"
+        line = process.stdout.readline().strip()
+        if line != "PUBLISHED":
+            _, errors = process.communicate(timeout=5)
+            pytest.fail(f"Cleaner did not reach publication: {line}\n{errors}")
+        published = output.read_bytes()
+        published_identity = SourceIdentity.capture(output)
+        manifest = json.loads((workspace / "job.json").read_text(encoding="utf-8"))
+        assert manifest["phase"] == "publish_prepared"
+        assert SourceIdentity.from_mapping(manifest["published_output"]) == published_identity
+        assert SourceIdentity.capture(source) == identity
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        process.communicate(timeout=5)
 
     recovered = recover_stale_workspaces(
         working_root=working,
@@ -619,6 +666,9 @@ def test_sigterm_after_visible_publish_quarantines_exact_unverified_output(
     )
 
     assert not output.exists()
+    assert source.read_bytes() == original
+    assert SourceIdentity.capture(source) == identity
+    assert not workspace.exists()
     assert len(recovered) == 1
     quarantined_outputs = [
         path
@@ -626,7 +676,13 @@ def test_sigterm_after_visible_publish_quarantines_exact_unverified_output(
         if path.is_file() and path.name.endswith("source-cleaned.mp4")
     ]
     assert len(quarantined_outputs) == 1
-    assert quarantined_outputs[0].read_bytes() == b"unverified-published-output"
+    assert quarantined_outputs[0].read_bytes() == published
+    assert quarantined_outputs[0].stat().st_ino == published_identity.inode
+    assert any(
+        event["event"] == "failed_output_quarantined"
+        and event["reason"] == "stale_job_publish_prepared"
+        for event in _events(tmp_path / "audit.jsonl")
+    )
 
 
 def test_stale_trash_requested_job_preserves_output_when_source_is_missing(

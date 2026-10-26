@@ -30,6 +30,17 @@ case "$MODE" in
     trap 'rm -rf "$diagnostic_runtime"' EXIT
     MAC_WATERMARK_RUNTIME_DIR="$diagnostic_runtime" \
       /bin/bash "$APP_BUNDLE/Contents/Resources/bootstrap_macos.sh" --diagnose
+    /bin/bash "$APP_BUNDLE/Contents/Resources/bootstrap_macos.sh" --test
+    /usr/bin/open -n "$APP_BUNDLE"
+    for _ in {1..40}; do
+      if /usr/bin/pgrep -x "$APP_NAME" >/dev/null; then
+        echo "NATIVE_APP_PROCESS_OK"
+        exit 0
+      fi
+      /bin/sleep 0.25
+    done
+    echo "ERROR: The native application did not stay running." >&2
+    exit 74
     ;;
   *)
     echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2

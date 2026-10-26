@@ -1,0 +1,69 @@
+name: macOS build and tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.23"
+          enable-cache: true
+      - name: Install private test Python
+        run: |
+          uv python install 3.12.13
+          uv venv --python 3.12.13 .venv
+          uv pip install --python .venv/bin/python -r requirements-macos-test.txt
+      - name: Check authored Python source
+        run: |
+          .venv/bin/ruff check app.py cli.py watermark_cleaner tests
+          .venv/bin/ruff format --check app.py cli.py watermark_cleaner tests
+      - name: Build and verify the macOS bundle
+        env:
+          COPYFILE_DISABLE: "1"
+        run: UV_SOURCE="$(command -v uv)" ./script/build_macos_app.sh
+      - name: Run all tests, including the real pretrained backends
+        env:
+          MAC_WATERMARK_OCR_HELPER: ${{ github.workspace }}/.build/macos/vision-ocr
+        run: .venv/bin/python -m pytest --junitxml=.build/test-results.xml
+      - name: Verify packaged imports stay local and omit obsolete backends
+        env:
+          PYTHONPATH: ${{ github.workspace }}/dist/MAC WATERMARK CLEANER.app/Contents/Resources/engine
+        run: |
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/.venv/bin/python" -c "import app, watermark_cleaner.engines, sys; from pathlib import Path; assert 'Contents/Resources/engine' in str(Path(app.__file__).resolve()); assert 'cv2' not in sys.modules; assert 'demark_world' not in sys.modules; assert callable(app.main)"
+      - name: Save release archive and test report
+        uses: actions/upload-artifact@v4
+        with:
+          name: MAC-WATERMARK-CLEANER-macOS-arm64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            .build/test-results.xml
+
+  release:
+    needs: macos
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: MAC-WATERMARK-CLEANER-macOS-arm64
+          path: .
+      - name: Publish the verified commit and same-run release archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./script/publish_release.sh

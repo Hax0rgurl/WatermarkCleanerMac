@@ -129,8 +129,15 @@ private func runSelfTest() -> Never {
     let required = [
         resources.appendingPathComponent("bootstrap_macos.sh"),
         resources.appendingPathComponent("engine/app.py"),
-        resources.appendingPathComponent("engine/demark_world/completion.py"),
+        resources.appendingPathComponent("engine/watermark_cleaner/completion.py"),
+        resources.appendingPathComponent("engine/watermark_cleaner/setup.py"),
+        resources.appendingPathComponent("engine/watermark_cleaner/model_store.py"),
+        resources.appendingPathComponent("engine/watermark_cleaner/engines.py"),
+        resources.appendingPathComponent("engine/watermark_cleaner/backends/e2fgvi/LICENSE"),
+        resources.appendingPathComponent("engine/watermark_cleaner/backends/propainter/LICENSE"),
+        resources.appendingPathComponent("engine/watermark_cleaner/backends/propainter/raft/LICENSE"),
         resources.appendingPathComponent("engine/requirements-macos.lock"),
+        resources.appendingPathComponent("tools/uv"),
         resources.appendingPathComponent("tools/trash-item"),
         resources.appendingPathComponent("tools/vision-ocr"),
         resources.appendingPathComponent("THIRD_PARTY_NOTICES.md"),
@@ -138,6 +145,13 @@ private func runSelfTest() -> Never {
     for path in required where !FileManager.default.fileExists(atPath: path.path) {
         fputs("SELF_TEST_FAILED missing \(path.path)\n", stderr)
         exit(1)
+    }
+    for legacyPackage in ["demark_world", "sorawm"] {
+        let legacy = resources.appendingPathComponent("engine/" + legacyPackage)
+        if FileManager.default.fileExists(atPath: legacy.path) {
+            fputs("SELF_TEST_FAILED obsolete engine package \(legacy.path)\n", stderr)
+            exit(1)
+        }
     }
     print("SELF_TEST_OK \(resources.path)")
     exit(0)
@@ -168,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var uiURL: URL?
     private var contentMode = ContentMode.loading
     private var isTerminating = false
+    private var pendingBackendOutput = ""
     private var selectionTimer: Timer?
     private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
@@ -396,8 +411,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let subtitle = NSTextField(
             wrappingLabelWithString:
-                "Preparing your private DeMark-World engine. " +
-                "The cleaner stays on this Mac."
+                "Preparing E2FGVI-HQ and ProPainter for local processing. " +
+                "The first launch downloads both models automatically."
         )
         subtitle.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         subtitle.textColor = Palette.muted
@@ -416,8 +431,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let safety = NSTextField(
             wrappingLabelWithString:
-                "Originals move to macOS Trash only after a cleaned output " +
-                "passes video validation. Any failure keeps the source."
+                "Your videos stay on this Mac. The cleaner saves a separate verified copy " +
+                "and keeps your originals."
         )
         safety.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         safety.textColor = Palette.muted
@@ -575,24 +590,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         DispatchQueue.main.async {
             self.logView.textStorage?.append(NSAttributedString(string: text))
             self.logView.scrollToEndOfDocument(nil)
-            if text.contains("[1/4]") {
-                self.statusLabel.stringValue = "PREPARING PRIVATE PYTHON RUNTIME…"
-            } else if text.contains("[2/4]") {
-                self.statusLabel.stringValue = "INSTALLING APP COMPONENTS…"
-            } else if text.contains("[3/4]") {
-                self.statusLabel.stringValue = "CONFIGURING VIDEO TOOLS…"
-            } else if text.contains("[4/4]") {
-                self.statusLabel.stringValue = "STARTING CLEANER…"
+            self.pendingBackendOutput += text
+            while let newline = self.pendingBackendOutput.firstIndex(of: "\n") {
+                let line = String(self.pendingBackendOutput[..<newline])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                self.pendingBackendOutput.removeSubrange(...newline)
+                self.handleBackendLine(line)
             }
-            for line in text.split(separator: "\n") {
-                if line.hasPrefix("MAC_WATERMARK_UI_URL="),
-                   let url = URL(
-                       string: String(line.dropFirst("MAC_WATERMARK_UI_URL=".count))
-                   ) {
-                    self.uiURL = url
-                    self.waitUntilReady(url: url, attempt: 0)
-                }
+        }
+    }
+
+    private func handleBackendLine(_ line: String) {
+        if line.hasPrefix("[1/5]") {
+            statusLabel.stringValue = "PREPARING PRIVATE PYTHON RUNTIME…"
+        } else if line.hasPrefix("[2/5]") {
+            statusLabel.stringValue = "INSTALLING LOCAL VIDEO COMPONENTS…"
+        } else if line.hasPrefix("[3/5]") {
+            statusLabel.stringValue = "CONFIGURING VIDEO TOOLS…"
+        } else if line.hasPrefix("[4/5]") {
+            statusLabel.stringValue = "PREPARING BOTH RESTORATION MODELS…"
+        } else if line.hasPrefix("[5/5]") {
+            statusLabel.stringValue = "STARTING CLEANER…"
+        } else if line.hasPrefix("MAC_WATERMARK_MODEL_PROGRESS=") {
+            let payload = line.dropFirst("MAC_WATERMARK_MODEL_PROGRESS=".count)
+            let fields = payload.split(separator: "|", maxSplits: 1)
+            if fields.count == 2, let fraction = Double(fields[0]) {
+                let percent = Int((min(1, max(0, fraction)) * 100).rounded())
+                statusLabel.stringValue = "\(percent)% // \(fields[1])"
             }
+        } else if line.hasPrefix("MAC_WATERMARK_UI_URL="),
+                  let url = URL(string: String(line.dropFirst("MAC_WATERMARK_UI_URL=".count))),
+                  url.scheme == "http", url.host == "127.0.0.1", url.port != nil {
+            uiURL = url
+            waitUntilReady(url: url, attempt: 0)
         }
     }
 
@@ -613,20 +643,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         task.standardError = pipe
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else {
-                return
-            }
-            self?.appendLog(text)
+            guard !data.isEmpty else { return }
+            self?.appendLog(String(decoding: data, as: UTF8.self))
         }
         task.terminationHandler = { [weak self] process in
             DispatchQueue.main.async {
                 guard let self, !self.isTerminating else { return }
                 self.spinner.stopAnimation(nil)
-                self.statusLabel.stringValue = "BACKEND STOPPED // CHECK JOB RECEIPTS"
+                self.statusLabel.stringValue = "CLEANER STOPPED // VIEW DIAGNOSTICS"
                 self.appendLog(
                     "\nThe cleaner exited with status \(process.terminationStatus). " +
-                    "Review the cleanup audit and current source/Trash locations " +
-                    "before retrying an interrupted job.\n"
+                    "Review the setup details below, then reopen the cleaner to retry. " +
+                    "Your source videos were kept.\n"
                 )
                 self.setContentMode(.diagnostics)
             }
@@ -656,7 +684,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if let http = response as? HTTPURLResponse, http.statusCode == 200 {
                     guard let self else { return }
                     self.spinner.stopAnimation(nil)
-                    self.statusLabel.stringValue = "READY // CLEANED COPY REMAINS"
+                    self.statusLabel.stringValue = "READY // LOCAL VIDEO RESTORATION"
                     self.loadCleaner(reloadingSelection: false)
                 } else {
                     self?.waitUntilReady(url: url, attempt: attempt + 1)
@@ -738,7 +766,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         panel.title = "Choose videos to clean"
         panel.prompt = "Add to Cleaner"
         panel.message =
-            "After a cleaned copy is verified, each selected original moves to macOS Trash."
+            "The cleaner saves a new copy and keeps your originals."
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true

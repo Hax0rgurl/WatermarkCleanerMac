@@ -3,8 +3,8 @@ import urllib.request
 
 import pytest
 
-from demark_world.completion import SourceIdentity
-from demark_world.video_stream import VideoPreviewServer
+from watermark_cleaner.completion import SourceIdentity
+from watermark_cleaner.video_stream import VideoPreviewServer
 
 
 @pytest.fixture
@@ -23,15 +23,17 @@ def request(url, *, method="GET", **headers):
 def test_browser_can_seek_forward_backward_and_request_the_mp4_tail(preview):
     video, server, url = preview
     data = video.read_bytes()
-    for header, start, end in [("bytes=1024-2047", 1024, 2047),
-                               ("bytes=0-511", 0, 511),
-                               ("bytes=-128", len(data)-128, len(data)-1),
-                               ("bytes=16000-", 16000, len(data)-1)]:
+    for header, start, end in [
+        ("bytes=1024-2047", 1024, 2047),
+        ("bytes=0-511", 0, 511),
+        ("bytes=-128", len(data) - 128, len(data) - 1),
+        ("bytes=16000-", 16000, len(data) - 1),
+    ]:
         with request(url, Range=header) as response:
             assert response.status == 206
             assert response.headers["Accept-Ranges"] == "bytes"
             assert response.headers["Content-Range"] == f"bytes {start}-{end}/{len(data)}"
-            assert response.read() == data[start:end+1]
+            assert response.read() == data[start : end + 1]
 
 
 def test_metadata_request_has_size_and_type_without_video_body(preview):
@@ -64,9 +66,11 @@ def test_preview_refuses_replaced_file_or_symlink(preview, tmp_path):
 
 def test_unknown_urls_and_remote_origins_cannot_read_local_files(preview):
     _, server, url = preview
-    for target, headers, code in [(url + "unknown", {}, 404),
-                                  (url, {"Origin": "https://example.com"}, 403),
-                                  (url, {"Host": "example.com"}, 403)]:
+    for target, headers, code in [
+        (url + "unknown", {}, 404),
+        (url, {"Origin": "https://example.com"}, 403),
+        (url, {"Host": "example.com"}, 403),
+    ]:
         with pytest.raises(urllib.error.HTTPError) as exc:
             request(target, **headers)
         assert exc.value.code == code

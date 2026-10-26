@@ -1,45 +1,39 @@
-# Version 1.1.2 verification
+# Version 2 verification
 
-The 1.1.2 checks cover coordinate errors, inaccurate frame metadata, real MP4 encoding and full decoding, and finishing timeouts. The historical media and 1.1.1 release checks below describe the earlier release, not a fresh long-video render.
+This document distinguishes startup/package checks from a complete media-quality review. Commands for reproducing the suite are in [tests/README.md](../tests/README.md).
 
-## Executed 1.1.2 checks
+## Startup and packaging checks executed
 
-- 110 relevant Mac tests passed on CPython 3.12.13, including the native Trash helper, restoration, playback, timed regions, and 11 new review regressions.
-- The public Mac API encoded a real 20-frame MP4 and full-output verification decoded it successfully without altering its source.
-- Inaccurate frame metadata (zero, too small, too large, and NaN) did not affect exact decoded counts.
-- Mux and verifier timeout injections failed safely without publishing output or retiring the source.
-- Native build, strict deep signature checks, fresh ZIP extraction, launcher self-tests, and bootstrap diagnostics passed.
-- The upstream-layout companion repository passed its 28 timed-region tests.
+On October 26, 2026, an empty, isolated runtime successfully:
 
-Exact counting adds an initial decode pass with bounded memory. Each mux/verification step allows one hour; inference is not given this deadline. No fresh ten-minute render or full visual grading is claimed for 1.1.2.
+- Downloaded managed CPython 3.12.13.
+- Installed the fully hashed production dependency lock.
+- Downloaded and verified all four E2FGVI-HQ and ProPainter checkpoint files.
+- Reported both model sets ready.
+- Reopened using the cached runtime and models without installing dependencies or downloading checkpoint files again.
 
-## Historical 1.1.1 verification
+The production runtime imported PyAV 19.0.2, Torch 2.13.0, and Torchvision 0.28.0. It had no OpenCV distribution and did not import `cv2`. Its base Python was inside the private managed runtime.
 
-## Success criteria
+The native version 2 app build passed strict signature verification, resource self-tests, macOS 14 minimum checks, bootstrap diagnostics, ZIP integrity checks, SHA-256 verification, and self-tests after a fresh ZIP extraction. The packaged bootstrap then passed its runtime import and local Streamlit health checks against that isolated runtime.
 
-- Installed app, release archive, and published engine source match.
-- Relevant macOS, restoration, timed-region, branding, playback, and completion tests pass.
-- Release signature, native self-test, and archive extraction are checked.
-- Published commit and downloaded release asset match local records.
-- Upstream contribution is reviewed against the original repository.
-- Obsolete local versions are removed only after publication verification.
+These checks prove setup and package integrity. They do not by themselves prove that every restored frame looks correct, that the installed Applications copy matches a future release, or that a remote CI run has completed.
 
-## Executed media checks
+The new CLI also completed a real four-frame E2FGVI-HQ restoration using explicit timed regions. Independent checks confirmed 96×64 dimensions, all four frames, exact timestamps, and an unchanged source SHA-256. This synthetic smoke test checks the command path; it is not a full-film visual assessment. The built Python wheel's installed command printed the expected version and help from outside the checkout.
 
-A 607.9-second, 1280×720, 30 fps film was scanned locally using Qwen3.5-4B, Apple Vision OCR, and model-confirmed visual tracking. It yielded 59 checked intervals and 234 boundary checks. Its 43 repeating corner InVideo appearances had a median cycle of 14.033 seconds. Other intervals covered Storyblocks, iStock/Getty branding, and an InVideo ending card.
+## Media and regression coverage
 
-No selected region was active on the previously affected caption frames at 5:00 and 8:00. A separate 16-second proof used the Latest quality profile with an unavailable localhost server. Direct Qwen3.8-27B fallback detected and timed the InVideo mark; LaMa removed it. All 480 frames and audio decoded, and visual inspection confirmed the two tested captions remained intact.
+The complete local suite passed: **167 tests**, including actual pretrained inference for both engines, native Apple Vision text recognition, native recoverable Trash receipts, CLI execution, real MP4 encoding/muxing/full decoding, and output-publication races. Authored Python lint and format checks also passed.
 
-The subsequent full-length app render completed at 03:11 ET on October 10, 2026. The completion receipt confirmed full-output verification. An independent FFmpeg decode with `-xerror` also succeeded for all video and audio. This verifies completion and decodability; every restored frame has not been visually graded.
+The supplied 372-frame variable-rate sample was scanned locally. The scan found the TikTok watermark in frames 0 through 127 at its first position and frames 128 through 371 at its second position. These bounds were checked against decoded source frames. Mask inspection prompted a tighter adjoining-logo search to exclude a bright scene detail.
 
-## Limits
+The full suite exercises both real pretrained CPU backends, timed masks, invalid input, local scanning, exact video timestamps, audio preservation, output publication, source identity, CLI behavior, and restoration failure paths. Some failure-path tests inject a restoration function; real-checkpoint tests remain separate and enabled.
 
-A separate app crash was not reproduced. Successful rendering is not proof that every possible crash is eliminated. Automatic detection does not guarantee coverage of unreadable logos, short appearances between samples, or arbitrary moving watermarks. Review the timeline and finished film. CUDA/E2FGVI and the historical vendored test suites are not claimed as passing on this Mac.
+A release is published only after the full macOS workflow succeeds. Its release job uses the same run's app ZIP and checksum. An existing version tag pointing to another commit is rejected, and an existing published release is never replaced.
 
-## Publication checks
+## Practical limits
 
-All 99 relevant tests passed on the verified CPython 3.12.13 runtime. These cover macOS branding/window integration, native Trash receipts and identity rechecks, upgrades, timed masks, OCR/branding guards, tracking, Range playback, scan scope, and LaMa restoration.
+Automatic detection starts from readable matching platform names, then compares local image detail across frames. It can miss tiny, unreadable, symbolic, brief, or unusual moving watermarks. Optional visual corrections remain available. A result's decodability does not establish perfect reconstruction of every hidden background detail.
 
-A fresh extraction of the 1.1.1 archive passed strict deep signature verification and the native self-test. The installed app, archive, and published source matched for all 220 packaged Python/HTML engine files.
+The output contract is H.264, 8-bit 4:2:0 MP4 using even dimensions, the first video stream, exact decoded frame timestamps, and supported original audio streams. Encoding is lossy. HDR, transparency, subtitles, and additional video streams are outside this contract. Unsupported MP4 audio or failed verification stops publication and preserves the source.
 
-Release ZIP SHA-256: `fb1b7c37839b28318ea2f79794559e7dcf088a72be8c23900a8b0145429a1311`.
+Version 1 verification records and old DeMark/LaMa operational instructions were removed from the current documentation. Their historical source remains in Git history; those results are not presented as proof of version 2 behavior.

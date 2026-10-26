@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="MAC WATERMARK CLEANER"
-VERSION="1.1.2"
-IDENTIFIER="com.hax0rgurl.SoraWatermarkCleaner"
+VERSION="2.0.0"
+IDENTIFIER="com.hax0rgurl.MacWatermarkCleaner"
 BUILD_DIR="$ROOT_DIR/.build/macos"
 DIST_DIR="$ROOT_DIR/dist"
 FINAL_APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
@@ -17,7 +17,17 @@ ENGINE_DIR="$RESOURCES_DIR/engine"
 ZIP_PATH="$DIST_DIR/MAC-WATERMARK-CLEANER-macOS-arm64-v$VERSION.zip"
 CHECKSUM_PATH="$ZIP_PATH.sha256"
 SWIFTC="${SWIFTC:-}"
-UV_SOURCE="${UV_SOURCE:-$HOME/pinokio/bin/miniforge/bin/uv}"
+UV_SOURCE="${UV_SOURCE:-$(command -v uv || true)}"
+if [[ -z "$UV_SOURCE" ]]; then
+  for candidate in \
+    "/Applications/$APP_NAME.app/Contents/Resources/tools/uv" \
+    "$HOME/Applications/$APP_NAME.app/Contents/Resources/tools/uv"; do
+    if [[ -x "$candidate" ]]; then
+      UV_SOURCE="$candidate"
+      break
+    fi
+  done
+fi
 diagnostic_runtime=""
 extract_dir=""
 
@@ -97,15 +107,10 @@ rsync -a \
   --exclude '.DS_Store' \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
-  --exclude 'iopaint/tests' \
-  "$ROOT_DIR/demark_world/" "$ENGINE_DIR/demark_world/"
+  "$ROOT_DIR/watermark_cleaner/" "$ENGINE_DIR/watermark_cleaner/"
 cp "$ROOT_DIR/app.py" "$ENGINE_DIR/app.py"
 cp "$ROOT_DIR/requirements-macos.txt" "$ENGINE_DIR/requirements-macos.txt"
 cp "$ROOT_DIR/requirements-macos.lock" "$ENGINE_DIR/requirements-macos.lock"
-mkdir -p "$ENGINE_DIR/resources"
-if [[ -f "$ROOT_DIR/resources/watermark_template.png" ]]; then
-  cp "$ROOT_DIR/resources/watermark_template.png" "$ENGINE_DIR/resources/"
-fi
 
 cp "$ROOT_DIR/script/bootstrap_macos.sh" "$RESOURCES_DIR/bootstrap_macos.sh"
 chmod +x "$RESOURCES_DIR/bootstrap_macos.sh"
@@ -117,7 +122,8 @@ if [[ -x "$UV_SOURCE" ]]; then
   cp "$UV_SOURCE" "$RESOURCES_DIR/tools/uv"
   chmod +x "$RESOURCES_DIR/tools/uv"
 else
-  echo "WARNING: uv was not bundled; the app will look for an installed copy."
+  echo "ERROR: UV_SOURCE must point to the official uv executable before packaging." >&2
+  exit 69
 fi
 
 echo "Building icon…"
@@ -138,7 +144,7 @@ payload = {
     "CFBundleName": app_name,
     "CFBundlePackageType": "APPL",
     "CFBundleShortVersionString": version,
-    "CFBundleVersion": "112",
+    "CFBundleVersion": "200",
     "LSMinimumSystemVersion": "14.0",
     "NSHighResolutionCapable": True,
     "NSPrincipalClass": "NSApplication",

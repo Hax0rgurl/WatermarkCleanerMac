@@ -1,23 +1,16 @@
 # Changelog
 
-## 1.1.2
+## 2.0.0
 
-- Ported the applicable reviewed fixes from upstream PR #11 into the Mac pipeline.
-- Validate timed intervals against successfully decoded frames and reject processing count changes.
-- Convert malformed coordinate errors to a clear ValueError while retaining numeric-string support.
-- Bound audio muxing and full-output verification to one hour each. Timeouts fail completion and preserve the source.
-- Added regression coverage and timed-region API documentation.
+- Replace DeMark/LaMa restoration with E2FGVI-HQ and ProPainter video inpainting. E2FGVI-HQ is the default.
+- Automatically install a private Python 3.12.13 runtime and both model sets on first launch. Verify pinned checkpoint sizes and SHA-256 hashes, show progress, keep valid files, and retry incomplete downloads.
+- Run local CPU inference through bounded overlapping video chunks and shot boundaries. Keep model predictions inside active masks before lossy encoding.
+- Seed watermark tracks with locally recognized brand names. Check individual frame appearances, retain start/stop times, and keep visual player corrections available without requiring numeric timing entry.
+- Preserve source files. Publish only a fully decoded and verified MP4 with matching frame count, dimensions, exact frame timestamps, and original audio packet contents.
+- Remove the separate MLX/LLM setup, OpenCV production dependency, and CUDA/MMCV requirements.
+- Add the shared-pipeline CLI, reproducible macOS runtime lock, real pretrained tests for both engines, native bundle validation, and Apple Silicon CI.
+- Retain complete backend licenses, upstream revisions, modification notices, and checkpoint provenance. The restoration backends have noncommercial terms separate from the app's Apache license.
 
-## 1.1.1
+## Earlier releases
 
-- Added automatic named-brand scanning, OCR checks, model-confirmed visual tracking, and audited start/stop ranges.
-- Added playable video, scrubbing, frame stepping, occurrence navigation, interval playback, and playhead-based manual corrections.
-- Restricted automatic masks to matching named branding to reduce accidental caption removal.
-- Fixed zero-result scans caused by copied icon descriptions and brand/account strings.
-- Added direct MLX fallback when a configured local vision server is unavailable.
-- Preserved checked timelines when model settings change; explicit rescans replace suggestions while preserving manual edits.
-- Improved LaMa mask compositing and local restoration context, preserving pixels outside selected masks before encoding.
-- Added identity-pinned HTTP Range playback and completion verification of all video/audio packets.
-- Added native Apple Vision OCR tooling and kept the optional vision environment separate from restoration dependencies.
-
-See [verification](docs/VERIFICATION.md) for tested results and remaining limitations.
+Versions 1.1.1 and 1.1.2 used the former DeMark/LaMa workflow. They introduced the native Mac window, named-watermark scanning, timed visual regions, completion checks, and review fixes. Their model setup, source-to-Trash behavior, and old operational instructions do not describe version 2. Git history preserves those releases.

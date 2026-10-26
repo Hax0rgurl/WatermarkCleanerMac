@@ -1,13 +1,15 @@
-# Opt-in timed watermark regions
+# Timed regions and the Python API
 
-The default detector workflow remains available. When a watermark appears intermittently, or the detector selects captions, supply reviewed boxes with individual start/stop frames instead. Only those pixels during those intervals are passed to LaMa. No detector weights are loaded when `automatic_detection=False`.
+The desktop player lets you draw and time boxes visually. The API below is for source use or saved corrections. Both use the same local restoration and output-verification pipeline.
+
+## Python
 
 ```python
 from pathlib import Path
-from demark_world.core import DeMarkWorld
+from watermark_cleaner.core import WatermarkCleaner
 
-engine = DeMarkWorld(automatic_detection=False)
-engine.run(
+cleaner = WatermarkCleaner("e2fgvi")  # or "propainter"
+cleaner.run(
     Path("input.mp4"),
     Path("cleaned.mp4"),
     watermark_regions=[
@@ -17,26 +19,39 @@ engine.run(
 )
 ```
 
-Coordinates are normalized `[left, top, right, bottom]`. Frame numbers are zero-based: start inclusive, end exclusive. A bare four-coordinate box applies throughout the video. Invalid boxes, invalid intervals, and automatic suggestions lacking an identity-check marker are rejected before encoding. This API does not itself detect or verify branding; callers remain responsible for supplying reviewed regions.
+Coordinates are normalized `[left, top, right, bottom]` within `0..1`. Frame numbers are zero-based: the start is included, and the stop is excluded. These example intervals require a source with at least 780 decoded frames. A bare four-coordinate list applies throughout the video.
 
-This first contribution supports LaMa and MP4 output. It streams frames, preserves pixels outside active masks before encoding, muxes available audio, fully decodes the result, and publishes only on success. Existing outputs and input files are preserved. Video encoding is lossy, so pixel preservation before encoding does not mean a bit-identical output. Constant-frame-rate inputs are the tested case; variable-frame-rate timing needs further work. CUDA/E2FGVI timed processing and UI controls are outside this PR.
+Pass reviewed manual regions to skip automatic scanning. Without regions, `watermark_text="InVideo, Storyblocks"` narrows the scan to those names. Omitting the text uses the built-in platform-name list. Automatic scanning needs the native Apple Vision helper produced by the build script.
 
-## Validation and finishing failures
+Regions and intervals are checked against actual decoded dimensions and frame counts. Invalid coordinates, empty intervals, and out-of-range frames fail before rendering. Automatic suggestions also need the scanner's identity-check marker. That marker records how a suggestion was checked; it does not independently prove perfect detection.
 
-The input is decoded once to determine its actual frame count before interval validation, then reopened for restoration. This adds one decode pass with bounded memory and avoids relying on backend frame-count estimates. The second pass must decode the same number of frames or processing fails without publication.
+## CLI JSON
 
-Coordinate conversion errors raise `ValueError` with a clear message. Frames at `end_frame` are excluded; an interval extending beyond the decoded input is rejected before encoding.
+Save this as `regions.json` for a source with at least 360 decoded frames:
 
-Audio muxing and final output verification each have a 3,600-second timeout. If either stage exceeds its deadline, `subprocess.TimeoutExpired` propagates, the encoder has already been stopped, temporary files are removed, and no output is published. A one-hour finishing deadline does not bound model inference or the initial decode pass.
-
-## Tests
-
-```bash
-uv run pytest tests/test_timed_regions.py tests/test_placeholder.py
+```json
+[
+  {
+    "bbox": [0.78, 0.04, 0.97, 0.13],
+    "start_frame": 300,
+    "end_frame": 360
+  }
+]
 ```
 
-The media integration tests require FFmpeg on PATH and use synthetic fixtures. They test timed masks, RGB/BGR compositing, audio, decoded frame counts despite inaccurate metadata, source preservation, malformed coordinates, both finishing-stage timeouts, failed inference cleanup, and existing-output protection. They inject a cleaner, so no model downloads are required. These injected-cleaner tests verify the processing contract, not model quality. Actual LaMa inference and full CUDA/E2FGVI coverage are outside this test suite.
+Then run:
 
-## Mac implementation
+```bash
+.venv/bin/python -m watermark_cleaner.cli \
+  -i input.mp4 -o cleaned.mp4 --engine propainter --regions regions.json
+```
 
-The Mac app uses VideoLoader and its existing completion pipeline rather than the upstream timed_cleaning module. VideoLoader counts successful decodes before compiling regions. LaMa checks that the processing pass produces the same count. Audio muxing and full-output verification each have a 3600-second deadline. A verification failure prevents recoverable source retirement. The count pass uses bounded memory and adds decode time; inference has no one-hour deadline.
+A JSON object containing a `regions` list is also accepted. An empty list is rejected, so clearing saved regions cannot silently request a new automatic scan. Region files apply to one video; batch CLI use requires automatic scanning.
+
+## Processing and completion
+
+The engine uses adjacent frames inside bounded chunks and avoids mixing frames across detected shot boundaries. Only active mask pixels are replaced before encoding; H.264 encoding is lossy, so an exported video is not pixel-identical outside the mask.
+
+The writer retains decoded source frame timestamps, including variable frame rate. Output publication requires matching dimensions, frame count and timestamps, matching compressed audio contents, and a successful full video/audio decode. Originals and existing destination files are preserved. A finishing error prevents publication. Audio muxing and the final FFmpeg decode each have a 3,600-second timeout; model inference has no fixed one-hour deadline.
+
+Output is H.264, 8-bit 4:2:0 MP4 with the source's supported audio streams copied. Odd video dimensions are currently rejected. Additional video streams, subtitles, alpha, and HDR preservation are not part of this output contract. An audio codec that cannot be copied into MP4 causes a clear finishing failure instead of silently dropping or replacing audio.

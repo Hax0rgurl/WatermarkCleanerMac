@@ -27,9 +27,10 @@ def test_native_picker_paths_replace_byte_only_streamlit_uploads() -> None:
     app = (ROOT / "app.py").read_text(encoding="utf-8")
 
     assert "_load_native_selection()" in app
-    assert "run_verified_cleaning_job(" in app
+    assert "validate_source_identity(" in app
+    assert "move_to_macos_trash(" not in app
     assert "st.file_uploader" not in app
-    assert "consume_selection_manifest(" in app
+    assert "SourceIdentity.from_mapping(" in app
     assert "remains exactly where it was" not in app
     assert "Those originals were not moved" not in app
 
@@ -45,23 +46,15 @@ def test_recoverable_trash_uses_foundation_not_permanent_unlink() -> None:
     assert "unlink" not in helper
 
 
-def test_full_decode_and_runtime_workspace_contracts() -> None:
-    completion = (ROOT / "demark_world/completion.py").read_text(encoding="utf-8")
-    core = (ROOT / "demark_world/core.py").read_text(encoding="utf-8")
+def test_startup_waits_for_verified_models_before_the_interface() -> None:
+    bootstrap = (ROOT / "script/bootstrap_macos.sh").read_text(encoding="utf-8")
     launcher = (ROOT / "macos/Launcher.swift").read_text(encoding="utf-8")
-
-    assert '"-xerror"' in completion
-    assert '"-frames:v"' not in completion
-    assert "timeout=60" not in completion.split("def verify_cleaned_video", 1)[1].split(
-        "def move_to_macos_trash", 1
-    )[0]
-    assert "working_directory" in core
-    assert '"video.partial.mp4"' in core
-    assert "before_publish" in core
-    assert "prepare_job_publication" in completion
-    assert '"trash_requested"' in completion
-    assert "reconcile_stale_workspace" in completion
-    assert "SOURCE FILES UNTOUCHED" not in launcher
+    assert bootstrap.index("-m watermark_cleaner.setup") < bootstrap.index("MAC_WATERMARK_UI_URL=")
+    assert "--require-hashes" in bootstrap
+    assert "pendingBackendOutput" in launcher
+    assert "MAC_WATERMARK_MODEL_PROGRESS=" in launcher
+    assert "keeps your originals" in launcher
+    assert "DeMark-World engine" not in launcher
 
 
 def test_vaporwave_family_tokens_are_present_and_readable() -> None:

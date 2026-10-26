@@ -1,78 +1,91 @@
-"""MAC WATERMARK CLEANER macOS web interface.
-
-The native AppKit shell owns source-file selection so this process receives
-real macOS paths. That lets successful jobs move the actual originals to Trash
-after the cleaned output has been verified.
-"""
+"""Local desktop interface for E2FGVI-HQ and ProPainter video restoration."""
 
 from __future__ import annotations
 
 import json
 import os
-import platform
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 from loguru import logger
 
-from demark_world.completion import (
-    CompletionResult,
-    OutputVerificationError,
+from watermark_cleaner.completion import (
     SourceIdentity,
     SourceIdentityError,
-    TrashLocationUnknown,
-    TrashMoveError,
     complete_job_workspace,
-    consume_selection_manifest,
     create_job_workspace,
     prepare_job_publication,
     quarantine_job_workspace,
-    recover_stale_workspaces,
-    run_verified_cleaning_job,
+    quarantine_recorded_output,
     validate_source_identity,
-    verify_cleaned_video,
 )
-from demark_world.configs import LOGS_PATH, OUTPUT_DIR, RUNTIME_ROOT
-from demark_world.core import DeMarkWorld
-from demark_world.schemas import CleanerType
-from demark_world.region_selector import select_watermark_regions, regions_for_processing
+from watermark_cleaner.configs import LOGS_PATH, OUTPUT_DIR, RUNTIME_ROOT
+from watermark_cleaner.region_selector import select_watermark_regions, selected_regions
 
 VIDEO_TYPES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+ENGINE_OPTIONS = {"E2FGVI-HQ": "e2fgvi", "ProPainter": "propainter"}
 
 
 @st.cache_resource(show_spinner=False)
 def _configure_logging() -> int:
+    LOGS_PATH.mkdir(parents=True, exist_ok=True)
     return logger.add(LOGS_PATH / "app.log", rotation="5 MB", retention=3)
 
 
-_LOG_SINK_ID = _configure_logging()
+def _model_status() -> dict[str, bool]:
+    from watermark_cleaner.model_store import models_status
+
+    status = models_status()
+    return {name: status.get(name) is True for name in ENGINE_OPTIONS.values()}
 
 
-@st.cache_resource(show_spinner=False)
-def _recover_stale_workspaces_once() -> int:
-    recovered = recover_stale_workspaces()
-    return len(recovered)
+def _download_models(progress=None) -> None:
+    from watermark_cleaner.model_store import ensure_models
+
+    ensure_models(None, progress=progress)
 
 
-_RECOVERED_STALE_JOBS = _recover_stale_workspaces_once()
-
-
-@st.cache_resource(show_spinner=False)
-def _load_engine() -> DeMarkWorld:
-    return DeMarkWorld(
-        cleaner_type=CleanerType.LAMA,
-        detect_batch_size=4,
-        enable_torch_compile=False,
-        automatic_detection=False,
-    )
+def _models_ready() -> bool:
+    """Finish first-launch provisioning and expose an explicit retry on failure."""
+    try:
+        status = _model_status()
+    except Exception as exc:
+        status = dict.fromkeys(ENGINE_OPTIONS.values(), False)
+        st.session_state["setup_error"] = str(exc)
+    if all(status.values()):
+        st.session_state.pop("setup_error", None)
+        return True
+    if not st.session_state.get("setup_attempted", False):
+        st.session_state["setup_attempted"] = True
+        bar = st.progress(0.0, text="Preparing both local restoration models…")
+        try:
+            _download_models(
+                lambda value, text: bar.progress(max(0.0, min(1.0, float(value))), text=str(text))
+            )
+            status = _model_status()
+            if not all(status.values()):
+                raise RuntimeError("Model preparation is incomplete. Reopen the app to retry.")
+            st.session_state.pop("setup_error", None)
+        except Exception as exc:
+            logger.exception("First-launch model preparation failed")
+            st.session_state["setup_error"] = str(exc)
+        finally:
+            bar.empty()
+    ready = all(status.values())
+    if not ready:
+        st.error(
+            "Setup could not finish: "
+            + st.session_state.get("setup_error", "One or both model downloads are incomplete.")
+        )
+        if st.button("RETRY MODEL SETUP", key="retry-model-setup"):
+            st.session_state["setup_attempted"] = False
+            st.rerun()
+    return ready
 
 
 def _output_path(source: Path) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    # The engine always produces H.264/AAC. MP4 is the reliable container for
-    # every accepted input type and prevents invalid WebM/AVI combinations.
-    return OUTPUT_DIR / f"{source.stem}-cleaned-{timestamp}.mp4"
+    return OUTPUT_DIR / f"{source.stem}-cleaned-{datetime.now():%Y%m%d-%H%M%S-%f}.mp4"
 
 
 def _selection_manifest_path() -> Path | None:
@@ -81,109 +94,92 @@ def _selection_manifest_path() -> Path | None:
 
 
 def _load_native_selection() -> list[SourceIdentity]:
-    """Read and revalidate identity-pinned records from the native picker."""
-
     manifest = _selection_manifest_path()
     if manifest is None or not manifest.is_file():
         return []
     try:
         payload = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        logger.exception("Could not read native selection manifest {}", manifest)
+        records = payload.get("sources", [])
+        if not isinstance(records, list):
+            raise ValueError("Invalid source queue")
+    except (OSError, ValueError, AttributeError):
+        logger.warning("Could not read the native video selection")
         return []
-
-    selected: list[SourceIdentity] = []
-    seen: set[tuple[int, int]] = set()
-    for raw_identity in payload.get("sources", []):
-        if not isinstance(raw_identity, dict):
+    selected, seen = [], set()
+    for record in records:
+        if not isinstance(record, dict):
             continue
         try:
-            identity = SourceIdentity.from_mapping(raw_identity)
+            identity = SourceIdentity.from_mapping(record)
             validate_source_identity(identity)
-        except SourceIdentityError as exc:
-            logger.warning("Skipping stale native selection: {}", exc)
+        except SourceIdentityError:
             continue
-        key = (identity.device, identity.inode)
-        if (
-            key not in seen
-            and identity.source_path.suffix.lower() in VIDEO_TYPES
-        ):
+        key = identity.device, identity.inode
+        if key not in seen and identity.source_path.suffix.lower() in VIDEO_TYPES:
             selected.append(identity)
             seen.add(key)
     return selected
 
 
+def _new_cleaner(engine_id: str):
+    from watermark_cleaner.core import WatermarkCleaner
+
+    return WatermarkCleaner(engine_id=engine_id)
+
+
 def _process_source(
     identity: SourceIdentity,
-    engine: DeMarkWorld,
+    cleaner,
     file_index: int,
     total: int,
     *,
     final_path: Path | None = None,
-    watermark_regions: list | None = None,
-) -> tuple[Path, CompletionResult]:
-    """Clean one pinned source and commit only after full validation."""
-
-    source = identity.source_path
-    progress = st.progress(0)
-    status = st.empty()
-    final_path = final_path or _output_path(source)
-    workspace = create_job_workspace(identity, final_path)
+    watermark_regions=None,
+    watermark_text: str = "",
+) -> Path:
+    """Publish a verified result while retaining the exact selected source."""
+    validate_source_identity(identity)
+    destination = final_path or _output_path(identity.source_path)
+    workspace = create_job_workspace(identity, destination)
+    bar = st.progress(0, text=f"Preparing {identity.source_path.name}…")
 
     def update(percent: int) -> None:
-        safe_percent = min(percent, 98)
-        overall = int(((file_index + safe_percent / 100) / total) * 100)
-        progress.progress(max(0, min(overall, 100)))
-        if percent < 50:
-            status.info(
-                f"File {file_index + 1}/{total}: processing selected watermark areas…"
-            )
-        elif percent < 95:
-            status.info(
-                f"File {file_index + 1}/{total}: restoring video frames…"
-            )
+        percent = max(0, min(100, int(percent)))
+        overall = int(((file_index + min(percent, 99) / 100) / max(1, total)) * 100)
+        if percent < 15:
+            text = "Finding and checking watermark appearances…"
+        elif percent < 90:
+            text = "Restoring video frames locally…"
         else:
-            status.info(
-                f"File {file_index + 1}/{total}: preserving audio and verifying…"
-            )
+            text = "Preserving audio and verifying the complete video…"
+        bar.progress(overall, text=f"{file_index + 1}/{total}: {text}")
 
-    def verify(output_path: Path, *, source: Path) -> None:
-        status.info(
-            f"File {file_index + 1}/{total}: decoding the complete cleaned file…"
-        )
-        verify_cleaned_video(output_path, source=source)
+    def before_publish(partial: Path, visible: Path):
+        validate_source_identity(identity)
+        return prepare_job_publication(workspace, partial, visible)
 
     try:
-        completion = run_verified_cleaning_job(
-            identity,
-            final_path,
-            lambda input_path, output_path: engine.run(
-                input_path,
-                output_path,
-                progress_callback=update,
-                quiet=True,
-                watermark_regions=watermark_regions,
-                working_directory=workspace,
-                before_publish=lambda partial, visible: prepare_job_publication(
-                    workspace,
-                    partial,
-                    visible,
-                ),
-            ),
-            verifier=verify,
-            workspace=workspace,
+        cleaner.run(
+            identity.source_path,
+            destination,
+            progress_callback=update,
+            quiet=True,
+            working_directory=workspace,
+            before_publish=before_publish,
+            watermark_regions=watermark_regions,
+            watermark_text=watermark_text,
         )
+        validate_source_identity(identity)
+        if not destination.is_file() or destination.stat().st_size == 0:
+            raise RuntimeError("The cleaner did not produce a verified video.")
     except Exception:
+        quarantine_recorded_output(workspace, reason="restoration_failed")
         quarantine_job_workspace(workspace)
         raise
-
-    # The source Trash receipt is already committed. These cleanup operations
-    # are best-effort and cannot change or misreport that result.
+    finally:
+        bar.empty()
     complete_job_workspace(workspace)
-    manifest = _selection_manifest_path()
-    if manifest is not None:
-        consume_selection_manifest(manifest, identity)
-    return final_path, completion
+    return destination
 
 
 def _inject_vaporwave_style() -> None:
@@ -407,237 +403,115 @@ def main() -> None:
         page_title="MAC WATERMARK CLEANER",
         page_icon="🎬",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
+    _configure_logging()
     _inject_vaporwave_style()
-
     st.markdown(
-        """
-        <section class="vw-hero">
-          <div class="vw-kicker">PRIVATE VIDEO RESTORATION // macOS</div>
-          <h1>MAC WATERMARK CLEANER</h1>
-          <p>Automatically find and time the named watermark, then remove it.
-          Play or scrub the video to check a range or correct a miss. Processing stays on your Mac.</p>
-        </section>
-        """,
+        """<section class="vw-hero"><div class="vw-kicker">LOCAL VIDEO RESTORATION</div>
+      <h1>MAC WATERMARK CLEANER</h1><p>Choose your videos, pick an engine, and remove the watermark.
+      Your original files stay where they are.</p></section>""",
         unsafe_allow_html=True,
     )
-
-    with st.sidebar:
-        st.header("PROCESSING")
-        st.caption("A local vision model confirms the branding. The scan finds "
-                   "each appearance and checks its start/stop frames before cleaning.")
-        st.caption("LaMa restoration loads when processing starts.")
-        if platform.system() == "Darwin":
-            st.caption(
-                "E2FGVI-HQ source is included for CUDA systems. This Mac build "
-                "uses the optimized LaMa path."
-            )
-        st.divider()
-        st.caption("CLEANED VIDEOS")
-        st.code(str(OUTPUT_DIR), language=None)
-        st.caption("APP DATA")
-        st.code(str(RUNTIME_ROOT), language=None)
-        st.caption("CLEANUP RECEIPTS")
-        st.code(str(LOGS_PATH / "cleanup-audit.jsonl"), language=None)
-
-    st.info("Choose the watermark name and press REMOVE WATERMARKS to find, check and clean its appearances automatically. "
-            "FIND & CHECK WATERMARK TIMES lets you preview the ranges first.")
-    if _RECOVERED_STALE_JOBS:
-        st.warning(
-            f"Recovered {_RECOVERED_STALE_JOBS} interrupted job workspace(s) "
-            "into App Data → Failed Jobs. Any matching unverified visible "
-            "output was quarantined; no queued source was moved."
+    ready = _models_ready()
+    engine_label = st.selectbox(
+        "Restoration engine", list(ENGINE_OPTIONS), index=0, key="restoration-engine"
+    )
+    st.caption(
+        "E2FGVI-HQ is the faster default on this Mac. ProPainter offers a second restoration model."
+    )
+    if ready:
+        st.caption("Both models are ready. Video processing stays on this Mac.")
+    with st.expander("Watermark options"):
+        watermark_text = st.text_input(
+            "Watermark name (optional)",
+            value="",
+            placeholder="Automatic detection, or enter a specific brand",
+            key="watermark-name",
         )
-    st.markdown(
-        """
-        <div class="vw-safety">
-          <strong>RECOVERABLE</strong>
-          <span>The app decodes the entire cleaned file, then confirms the
-          source is still the exact device/inode selected before asking macOS
-          to Trash it. Unconfirmed jobs are never marked complete.</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
+        st.caption(
+            "Leave this blank to find common platform watermarks automatically. Enter a name if a brand is missed."
+        )
     sources = _load_native_selection()
-    st.subheader("SOURCE QUEUE")
-    if not sources:
-        st.markdown(
-            """
-            <div class="vw-empty">
-              <strong>NO VIDEOS SELECTED</strong>
-              Use CHOOSE VIDEOS in the app toolbar above to select files from
-              anywhere on your Mac.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        st.write(f"{len(sources)} video(s) ready:")
-        selections: dict[str, list] = {}
+    st.subheader("VIDEOS")
+    if sources:
         for identity in sources:
-            size = identity.size / 1_048_576
-            st.code(
-                f"{identity.source_path}  ·  {size:.1f} MB",
-                language=None,
-            )
-            with st.expander(f"Video & watermark timeline: {identity.source_path.name}", expanded=True):
-                selections[str(identity.source_path)] = select_watermark_regions(identity)
-
-        missing_selection = any(
-            not selections.get(str(identity.source_path)) for identity in sources
-        )
-        if missing_selection:
-            st.caption("Removal will run the automatic scan for videos without checked ranges.")
-
-        if st.button(
-            "REMOVE WATERMARKS",
-            type="primary",
-            use_container_width=True,
-            disabled=False,
-        ):
-            results: list[tuple[Path, CompletionResult]] = []
-            failures: list[tuple[Path, str]] = []
-            ready_sources = []
+            st.write(f"**{identity.source_path.name}** · {identity.size / 1_048_576:.1f} MB")
+        review = st.toggle("Review or adjust watermark times", value=False, key="review-watermarks")
+        if review:
             for identity in sources:
-                scan_progress = st.progress(0, text=f"Checking watermark times: {identity.source_path.name}")
+                with st.expander(identity.source_path.name, expanded=True):
+                    select_watermark_regions(identity, watermark_text=watermark_text)
+    else:
+        st.info("Use CHOOSE VIDEOS in the app toolbar to select a video.")
+    if st.button(
+        "REMOVE WATERMARKS",
+        type="primary",
+        use_container_width=True,
+        disabled=not (ready and sources),
+        key="remove-watermarks",
+    ):
+        completed = list(st.session_state.get("completed", []))
+        cleaner = None
+        try:
+            cleaner = _new_cleaner(ENGINE_OPTIONS[engine_label])
+        except Exception as exc:
+            st.error(f"Could not prepare {engine_label}: {exc}")
+            logger.exception("Cleaner could not start")
+        if cleaner is not None:
+            for index, identity in enumerate(sources):
                 try:
-                    selections[str(identity.source_path)] = regions_for_processing(
-                        identity, progress=lambda value, text:
-                        scan_progress.progress(float(value), text=text))
+                    path = _process_source(
+                        identity,
+                        cleaner,
+                        index,
+                        len(sources),
+                        watermark_regions=selected_regions(identity, watermark_text),
+                        watermark_text=watermark_text,
+                    )
                 except Exception as exc:
-                    failures.append((identity.source_path, str(exc)))
                     st.error(f"{identity.source_path.name}: {exc}")
-                    logger.exception("Automatic watermark scan failed for {}", identity.source_path)
+                    logger.exception("Restoration failed for {}", identity.source_path)
                 else:
-                    ready_sources.append(identity)
-                finally:
-                    scan_progress.empty()
-            engine = None
-            try:
-                if ready_sources:
-                    with st.spinner(
-                        "Loading the restoration model. First use can take several minutes…"
-                    ):
-                        engine = _load_engine()
-            except Exception as exc:
-                st.error(f"Could not load the cleaner: {exc}")
-                logger.exception("Cleaner engine failed to load")
-                engine = None
-
-            if engine is not None:
-                for index, identity in enumerate(ready_sources):
-                    source = identity.source_path
-                    try:
-                        completed_job = _process_source(
-                            identity,
-                            engine,
-                            index,
-                            len(ready_sources),
-                            watermark_regions=selections[str(source)],
-                        )
-                    except SourceIdentityError as exc:
-                        failures.append((source, str(exc)))
-                        st.error(f"{source.name}: {exc}")
-                        st.warning(
-                            "The path changed identity, so the app refused to "
-                            "move anything at that path."
-                        )
-                    except OutputVerificationError as exc:
-                        failures.append((source, str(exc)))
-                        st.error(f"{source.name}: {exc}")
-                        st.warning(
-                            "Full-file validation failed before any source "
-                            "Trash request."
-                        )
-                    except TrashLocationUnknown as exc:
-                        failures.append((source, str(exc)))
-                        st.error(f"{source.name}: {exc}")
-                        st.warning(
-                            "macOS did not provide a recoverable location. "
-                            "Inspect both the source path and Trash."
-                        )
-                    except TrashMoveError as exc:
-                        failures.append((source, str(exc)))
-                        st.error(f"{source.name}: {exc}")
-                        st.warning(
-                            "The Trash commit was not confirmed. Inspect both "
-                            "the source path and Trash before retrying."
-                        )
-                    except Exception as exc:
-                        failures.append((source, str(exc)))
-                        logger.exception("Cleaning failed for {}", source)
-                        st.error(f"{source.name}: {exc}")
-                        st.warning(
-                            "The job stopped before a confirmed Trash commit. "
-                            "Review the source path and cleanup audit."
-                        )
-                    else:
-                        results.append(completed_job)
-                        st.success(
-                            f"Verified {completed_job[0].name}. "
-                            "Foundation confirmed the original in macOS Trash."
-                        )
-
-            if results:
-                st.session_state["completed"] = [
-                    {
-                        "output": str(path),
-                        "source": receipt.source,
-                        "trashed": receipt.trashed,
-                        "completed_at": receipt.completed_at,
-                    }
-                    for path, receipt in results
-                ]
-                st.success(
-                    f"Completed {len(results)} video(s). Verified outputs remain; "
-                    "their originals are recoverable from macOS Trash."
-                )
-            if failures:
-                st.warning(
-                    f"{len(failures)} file(s) were not completed. "
-                    "Review their individual status before retrying."
-                )
-
+                    completed.append(
+                        {
+                            "output": str(path),
+                            "source": str(identity.source_path),
+                            "engine": engine_label,
+                        }
+                    )
+                    st.success(f"Saved and verified {path.name}. Original kept.")
+        st.session_state["completed"] = completed
     completed = [
-        item
-        for item in st.session_state.get("completed", [])
-        if Path(item["output"]).is_file()
+        record
+        for record in st.session_state.get("completed", [])
+        if Path(record["output"]).is_file()
     ]
     if completed:
-        st.subheader("COMPLETED")
-        st.info("Your cleaned files are already saved. Use OUTPUT in the app toolbar to open their folder, or DOWNLOAD to save another copy.")
-        for item in completed:
-            path = Path(item["output"])
-            left, right = st.columns([3, 1])
-            left.code(
-                f"{path}\nOriginal → {item['trashed']}",
-                language=None,
-            )
-            right.download_button(
+        st.subheader("CLEANED VIDEOS")
+        st.caption("Files are already saved in the OUTPUT folder. Download saves another copy.")
+        for index, record in enumerate(completed):
+            path = Path(record["output"])
+            st.write(f"**{path.name}** · {record.get('engine', 'Local restoration')}")
+            st.download_button(
                 "DOWNLOAD",
                 data=path.read_bytes(),
                 file_name=path.name,
                 mime="video/mp4",
-                key=f"download-{path}",
-                use_container_width=True,
+                key=f"download-{index}-{path}",
                 on_click="ignore",
             )
-
-    st.divider()
-    st.markdown(
-        """
-        <p class="small-note">
-        Universal engine derived from
-        <a href="https://github.com/linkedlist771/DeMark-World">DeMark-World</a>
-        by LLinkedlist (MIT). Original Sora project distributed under
-        Apache-2.0. Full notices are included with the app and source.
-        </p>
-        """,
-        unsafe_allow_html=True,
-    )
+    with st.sidebar:
+        st.caption("OUTPUT FOLDER")
+        st.code(str(OUTPUT_DIR), language=None)
+        st.caption("APP DATA")
+        st.code(str(RUNTIME_ROOT), language=None)
+        st.caption(
+            "Models download automatically once, then run locally. No cloud processing or credits."
+        )
+        st.caption(
+            "The included research models have noncommercial licenses. See the bundled notices for permissions."
+        )
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from sorawm.schemas import CleanerType
+from watermark_cleaner.engines import EngineName
 
 
 @pytest.fixture
@@ -64,7 +64,7 @@ def mock_video_masks():
 @pytest.fixture
 def cleaner_types():
     """Provide all available cleaner types."""
-    return [CleanerType.LAMA, CleanerType.E2FGVI_HQ]
+    return [EngineName.PROPAINTER, EngineName.E2FGVI]
 
 
 @pytest.fixture

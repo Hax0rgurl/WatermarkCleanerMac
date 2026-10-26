@@ -1,1 +1,0 @@
-![](../assests/wechat_reward.jpg)

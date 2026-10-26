@@ -1,50 +1,36 @@
 [project]
 name = "mac-watermark-cleaner"
-version = "1.1.2"
-description = "Universal Mac watermark cleaner powered by DeMark-World"
+version = "2.0.0"
+description = "Local video watermark restoration with E2FGVI-HQ and ProPainter"
 readme = "README.md"
-license = "Apache-2.0"
-license-files = ["LICENSE"]
+license = "Apache-2.0 AND MIT AND CC-BY-NC-4.0 AND LicenseRef-S-Lab-1.0 AND BSD-3-Clause"
+license-files = [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_LICENSES/*.txt",
+    "watermark_cleaner/backends/**/LICENSE",
+]
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "ffmpeg-python==0.2.0",
+    "av==19.0.2",
+    "einops==0.8.2",
     "imageio-ffmpeg==0.6.0",
     "loguru==0.7.3",
     "numpy==2.5.1",
-    "opencv-python==5.0.0.93",
-    "pandas==3.0.5",
-    "pydantic==2.13.4",
+    "Pillow==12.3.0",
     "requests==2.34.2",
-    "ruptures==1.1.20",
-    "scikit-learn==1.9.0",
+    "scipy==1.18.0",
     "streamlit==1.60.0",
     "torch==2.13.0",
+    "torchvision==0.28.0",
     "tqdm==4.70.0",
-    "ultralytics==8.4.108",
 ]
 
 [project.optional-dependencies]
-temporal-cuda = [
-    "mmcv>=2.0,<2.3",
-    "mmengine>=0.10,<0.11",
-    "torchvision>=0.20",
-]
-server = [
-    "aiofiles>=24.1",
-    "aiosqlite>=0.21",
-    "fastapi>=0.108",
-    "python-multipart>=0.0.20",
-    "sqlalchemy>=2.0",
-    "uvicorn>=0.35",
-]
-dev = [
-    "pytest>=8.3",
-    "ruff>=0.11",
-]
+dev = ["pytest==9.0.2", "ruff==0.14.5"]
 
 [project.scripts]
-mac-watermark-cleaner = "demark_world.cli:main"
-sora-watermark-cleaner = "demark_world.cli:main"
+mac-watermark-cleaner = "watermark_cleaner.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -56,11 +42,15 @@ markers = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["demark_world*", "sorawm*"]
+include = ["watermark_cleaner*"]
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["watermark_cleaner/backends"]
 
 [build-system]
-requires = ["setuptools>=75", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+watermark_cleaner = ["watermark_selector/*.html", "backends/**/LICENSE*", "backends/**/UPSTREAM.md"]

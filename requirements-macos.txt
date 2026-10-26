@@ -1,16 +1,13 @@
-# Standard macOS runtime. The E2FGVI-HQ CUDA/MMCV backend is intentionally
-# excluded; its source remains available under demark_world/.
-ffmpeg-python==0.2.0
+# Apple Silicon macOS runtime. Both restoration engines run locally on CPU.
+av==19.0.2
+einops==0.8.2
 imageio-ffmpeg==0.6.0
 loguru==0.7.3
 numpy==2.5.1
-opencv-python==5.0.0.93
-pandas==3.0.5
-pydantic==2.13.4
+Pillow==12.3.0
 requests==2.34.2
-ruptures==1.1.10
-scikit-learn==1.9.0
+scipy==1.18.0
 streamlit==1.60.0
 torch==2.13.0
+torchvision==0.28.0
 tqdm==4.70.0
-ultralytics==8.4.108
